@@ -9,20 +9,25 @@
 
 #define STEP_PIN 10
 #define DIR_PIN 6
-#define END_SWITCH 11
+#define END_SWITCH_1 11
+#define END_SWITCH_2 12
  
-bool dirHigh;
+//bool dirHigh;
 bool stepHigh;
 bool ledHigh;
 
 
-bool endSwitchTriggered;
-bool shouldToggle;
+bool endSwitchOneTriggered;
+bool endSwitchTwoTriggered;
+//bool shouldToggle = false;;
+bool motorShouldStop = false;
 bool stepperOn = false;
-int switchState = 0;
+int switchOneState = 0;
+int switchTwoState = 0;
+int PRESSED_DOWN = 0;
 
 String inputString = "";         // a String to hold incoming data
-boolean stringComplete = false;  // whether the string is complete
+bool stringComplete = false;  // whether the string is complete
 float x = 1.0;
 
 Thread* th_a_step = new Thread();
@@ -54,31 +59,43 @@ void serial_callback() {
 
 void endSwitch_callback() {
   // trigger led toggle on switch high
-  switchState = digitalRead(END_SWITCH);
-  if (!endSwitchTriggered && !switchState) {
-    shouldToggle = true;
-    endSwitchTriggered = true;
+  switchOneState = digitalRead(END_SWITCH_1);
+  switchTwoState = digitalRead(END_SWITCH_2);
+
+  if ((switchOneState == PRESSED_DOWN) || 
+      (switchTwoState == PRESSED_DOWN)) {
+    motorShouldStop = true;
   }
-  
-  if (endSwitchTriggered && switchState) {
-    endSwitchTriggered = false;
+
+//  if (!endSwitchOneTriggered && !switchOneState) {
+//    shouldToggle = true;
+//    endSwitchOneTriggered = true;
+//  }
+//  
+//  if (endSwitchOneTriggered && switchOneState) {
+//    endSwitchOneTriggered = false;
+//  }
+
+  if (motorShouldStop) {
+    stepperOn = false;
+    motorShouldStop = false;
   }
 
   
-  if (shouldToggle) {
-    // toggle light
-    if (ledHigh) {
-      digitalWrite(LED_BUILTIN, LOW);
-      ledHigh = false;
-      stepperOn = false;
-    }
-    else {
-      digitalWrite(LED_BUILTIN, HIGH);
-      ledHigh = true;
-      stepperOn = false;
-    }
-    shouldToggle = false;
-  }
+//  if (shouldToggle) {
+//    // toggle light
+//    if (ledHigh) {
+//      digitalWrite(LED_BUILTIN, LOW);
+//      ledHigh = false;
+//      stepperOn = false;
+//    }
+//    else {
+//      digitalWrite(LED_BUILTIN, HIGH);
+//      ledHigh = true;
+//      stepperOn = false;
+//    }
+//    shouldToggle = false;
+//  }
  
 //  Serial.println("Endswitch\t\tcallback");
 }
@@ -90,7 +107,7 @@ void timerCallback(){
 
 void setup() {
   // Stepper motor
-  dirHigh = true;
+//  dirHigh = true;
   stepHigh = false;
   digitalWrite(DIR_PIN, HIGH);
   digitalWrite(STEP_PIN, LOW);
@@ -103,9 +120,10 @@ void setup() {
   digitalWrite(LED_BUILTIN, LOW);
 
   // Endstop(/limit) switch
-  endSwitchTriggered = false;
-  shouldToggle = false;
-  pinMode(END_SWITCH, INPUT);
+  pinMode(END_SWITCH_1, INPUT);
+  pinMode(END_SWITCH_2, INPUT);
+  endSwitchOneTriggered = false;
+  endSwitchTwoTriggered = false;
 
   // Serial
   Serial.begin(9600);
@@ -131,13 +149,20 @@ void loop() {
     Serial.println(inputString);
     x = inputString.toFloat();
     if (x==0) {
-      x = 0.00001;
       stepperOn = false;
     }
-    if (x > 0.00001) {
+    else {
+      if (x < 0) {
+        digitalWrite(DIR_PIN, LOW);
+      }
+      else {
+        digitalWrite(DIR_PIN, HIGH);
+      }
+      x = abs(x);
+      th_a_step->setInterval(5000/(1.0*x));
       stepperOn = true;
     }
-    th_a_step->setInterval(5000/(1.0*x)); // 10 miliseconds
+    
 //    x = inputStringsubstring(1).toFloat();
 //    if (inputString.substring(0, 1) == "s") {
 //      th_a_step->setInterval(5000/(1.0*x)); // 10 miliseconds
