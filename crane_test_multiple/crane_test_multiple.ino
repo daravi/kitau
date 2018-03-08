@@ -7,54 +7,65 @@
 
 
 
-#define STEP_PIN 10
-#define DIR_PIN 6
-#define END_SWITCH_1 11
-#define END_SWITCH_2 12
+//Pin Layout
+#define M1_DIR_PIN 6
+#define M1_STEP_PIN 7
+#define END_SWITCH_1 8
+#define M2_DIR_PIN 2
+#define M2_STEP_PIN 3
+#define END_SWITCH_2 9
+
+#define PRESSED_DOWN 0
+#define STOP 0
  
-//bool dirHigh;
-bool stepHigh;
-bool ledHigh;
+bool m1StepHigh = false;
+bool m2StepHigh = false;
 
+bool endSwitchOneTriggered = false;
+bool endSwitchTwoTriggered = false;
 
-bool endSwitchOneTriggered;
-bool endSwitchTwoTriggered;
-//bool shouldToggle = false;;
-bool motorShouldStop = false;
-bool stepperOn = false;
+bool m1StepperOn = false;
+bool m2StepperOn = false;
+
 int switchOneState = 0;
 int switchTwoState = 0;
-int PRESSED_DOWN = 0;
 
 String inputString = "";         // a String to hold incoming data
 bool stringComplete = false;  // whether the string is complete
-float x = 1.0;
+float x_pos = 0.0;
+float y_pos = 0.0;
 
-Thread* th_a_step = new Thread();
-Thread* th_s_serial = new Thread();
+Thread* th_a_m1_step = new Thread();
+Thread* th_a_m2_step = new Thread();
 Thread* th_s_endSwitch = new Thread();
 
-StaticThreadController<3> controller (th_a_step, th_s_serial, th_s_endSwitch);
+//StaticThreadController<3> controller (th_a_m1_step, th_a_m2_step, th_s_endSwitch);
+StaticThreadController<2> controller (th_a_m1_step, th_a_m2_step);
 
-void step_callback() {
-  if (stepHigh) {
-    digitalWrite(STEP_PIN, LOW);
-    stepHigh = false;
+void m1_step_callback() {
+  if (m1StepHigh) {
+    digitalWrite(M1_STEP_PIN, LOW);
+    m1StepHigh = false;
   }
   else {
-    if (stepperOn) {
-      digitalWrite(STEP_PIN, HIGH);
-      stepHigh = true;
+    if (m1StepperOn) {
+      digitalWrite(M1_STEP_PIN, HIGH);
+      m1StepHigh = true;
     }
   }
-//  digitalWrite(STEP_PIN, HIGH);
-//  delayMicroseconds(520);
-//  digitalWrite(STEP_PIN, LOW);
-//  Serial.println("Stepping\t\tcallback");
 }
 
-void serial_callback() {
-//  Serial.println("Serial\t\tcallback");
+void m2_step_callback() {
+  if (m2StepHigh) {
+    digitalWrite(M2_STEP_PIN, LOW);
+    m2StepHigh = false;
+  }
+  else {
+    if (m2StepperOn) {
+      digitalWrite(M2_STEP_PIN, HIGH);
+      m2StepHigh = true;
+    }
+  }
 }
 
 void endSwitch_callback() {
@@ -62,42 +73,14 @@ void endSwitch_callback() {
   switchOneState = digitalRead(END_SWITCH_1);
   switchTwoState = digitalRead(END_SWITCH_2);
 
-  if ((switchOneState == PRESSED_DOWN) || 
-      (switchTwoState == PRESSED_DOWN)) {
-    motorShouldStop = true;
+  if (switchOneState == PRESSED_DOWN) {
+    m1StepperOn = false;
   }
 
-//  if (!endSwitchOneTriggered && !switchOneState) {
-//    shouldToggle = true;
-//    endSwitchOneTriggered = true;
-//  }
-//  
-//  if (endSwitchOneTriggered && switchOneState) {
-//    endSwitchOneTriggered = false;
-//  }
-
-  if (motorShouldStop) {
-    stepperOn = false;
-    motorShouldStop = false;
+  if (switchTwoState == PRESSED_DOWN) {
+    m2StepperOn = false;
   }
 
-  
-//  if (shouldToggle) {
-//    // toggle light
-//    if (ledHigh) {
-//      digitalWrite(LED_BUILTIN, LOW);
-//      ledHigh = false;
-//      stepperOn = false;
-//    }
-//    else {
-//      digitalWrite(LED_BUILTIN, HIGH);
-//      ledHigh = true;
-//      stepperOn = false;
-//    }
-//    shouldToggle = false;
-//  }
- 
-//  Serial.println("Endswitch\t\tcallback");
 }
 
 // This is the callback for the Timer
@@ -106,34 +89,30 @@ void timerCallback(){
 }
 
 void setup() {
-  // Stepper motor
-//  dirHigh = true;
-  stepHigh = false;
-  digitalWrite(DIR_PIN, HIGH);
-  digitalWrite(STEP_PIN, LOW);
-  pinMode(DIR_PIN, OUTPUT);
-  pinMode(STEP_PIN, OUTPUT);
+  // Serial
+  Serial.begin(9600);
+  inputString.reserve(200);
+  
+  // Stepper motors
+  pinMode(M1_DIR_PIN, OUTPUT);
+  pinMode(M1_STEP_PIN, OUTPUT);
+  digitalWrite(M1_DIR_PIN, LOW);
+  digitalWrite(M1_STEP_PIN, LOW);
 
-  // Built-in LED
-  ledHigh = false;
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW);
+  pinMode(M2_DIR_PIN, OUTPUT);
+  pinMode(M2_STEP_PIN, OUTPUT);
+  digitalWrite(M2_DIR_PIN, LOW);
+  digitalWrite(M2_STEP_PIN, LOW);
 
   // Endstop(/limit) switch
   pinMode(END_SWITCH_1, INPUT);
   pinMode(END_SWITCH_2, INPUT);
-  endSwitchOneTriggered = false;
-  endSwitchTwoTriggered = false;
-
-  // Serial
-  Serial.begin(9600);
-  inputString.reserve(200);
 
   // Threads
-  th_a_step->setInterval(5000/(1.0*x)); // microseconds
-  th_a_step->onRun(step_callback);  
-  th_s_serial->setInterval(10000); 
-  th_s_serial->onRun(serial_callback);  
+  th_a_m1_step->setInterval(10000); // microseconds
+  th_a_m1_step->onRun(m1_step_callback);
+  th_a_m2_step->setInterval(10000); // microseconds
+  th_a_m2_step->onRun(m2_step_callback);
   th_s_endSwitch->setInterval(10000);
   th_s_endSwitch->onRun(endSwitch_callback);
 
@@ -146,30 +125,42 @@ void setup() {
 
 void loop() {
   if (stringComplete) {
-    Serial.println(inputString);
-    x = inputString.toFloat();
-    if (x==0) {
-      stepperOn = false;
+
+    x_pos = inputString.substring(0,2).toFloat();
+//    Serial.println(abs(x_pos));
+    y_pos = inputString.substring(2,4).toFloat();
+//    Serial.println(abs(y_pos));
+    
+    // set motor 1 speed
+    if (x_pos == STOP) {
+      m1StepperOn = false;
     }
     else {
-      if (x < 0) {
-        digitalWrite(DIR_PIN, LOW);
+      if (x_pos < 0) {
+        digitalWrite(M1_DIR_PIN, LOW);
       }
       else {
-        digitalWrite(DIR_PIN, HIGH);
+        digitalWrite(M1_DIR_PIN, HIGH);
       }
-      x = abs(x);
-      th_a_step->setInterval(5000/(1.0*x));
-      stepperOn = true;
+      th_a_m1_step->setInterval(4000.0/abs(x_pos)); // could go down to 3750
+      m1StepperOn = true;
     }
-    
-//    x = inputStringsubstring(1).toFloat();
-//    if (inputString.substring(0, 1) == "s") {
-//      th_a_step->setInterval(5000/(1.0*x)); // 10 miliseconds
-//    }
-//    if (inputString.substring(0, 1) == "p") {
-//      
-//    }
+
+    // set motor 2 speed
+    if (y_pos == STOP) {
+      m2StepperOn = false;
+    }
+    else {
+      if (y_pos < 0) {
+        digitalWrite(M2_DIR_PIN, LOW);
+      }
+      else {
+        digitalWrite(M2_DIR_PIN, HIGH);
+      }
+      
+      th_a_m2_step->setInterval(4000.0/abs(y_pos));
+      m2StepperOn = true;
+    }
     
     // clear the string:
     inputString = "";

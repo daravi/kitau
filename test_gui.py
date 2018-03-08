@@ -8,8 +8,8 @@ Website: zetcode.com
 
 import sys
 from PyQt5.QtWidgets import (QWidget, QToolTip, 
-    QPushButton, QApplication)
-from PyQt5.QtGui import QFont    
+    QPushButton, QApplication, QTextEdit)
+from PyQt5.QtGui import (QFont)  
 
 from PyQt5.QtCore import pyqtSlot
 
@@ -28,21 +28,46 @@ class CraneTest(QWidget):
         
         self.setToolTip('Pooya\'s custom test widget.')
         
-        btn = QPushButton('Start', self)
-        btn.setToolTip('Start the <b>motor</b>.')
-        btn.resize(btn.sizeHint())
-        btn.move(50, 50)
-        btn.clicked.connect(self.on_click)
+        self.btn = QPushButton('Start', self)
+        # self.btn2 = QPushButton('St', self)
+        self.btn.setToolTip('Start the <b>motor</b>.')
+        self.btn.resize(self.btn.sizeHint())
+        self.btn.move(20, 100)
+        self.btn.clicked.connect(self.on_click)
+
+        # x_pos = QLabel('X-Position')
+        # y_pos = QLabel('Y-Position')
+
+        # titleEdit = QLineEdit()
+        self.x_pos_input = QTextEdit('0.0', self)    
+        self.x_pos_input.resize(200,20)
+        self.x_pos_input.move(20, 20)
+        self.y_pos_input = QTextEdit('0.0', self)    
+        self.y_pos_input.resize(200,20)
+        self.y_pos_input.move(20, 50)
+        # authorEdit = QLineEdit()
+        # reviewEdit = QTextEdit()
+
+        # grid = QGridLayout()
+        # grid.setSpacing(10)
+
+        # grid.addWidget(title, 1, 0)
+        # grid.addWidget(titleEdit, 1, 1)
         
-        self.setGeometry(300, 300, 300, 200)
+        self.setGeometry(300, 300, 400, 300)
         self.setWindowTitle('Tooltips')    
         self.show()
 
 
     @pyqtSlot()
     def on_click(self):
-        btn.setText("Stop");
-        print('PyQt5 button click')
+        text = self.btn.text()
+        if text == "Start":
+            self.btn.setText("Stop")
+        if text == "Stop":
+            self.btn.setText("Start")
+
+
 
 if __name__ == '__main__':
     print("running app...")
