@@ -7,45 +7,64 @@
 
 
 
-#define STEP_PIN 10
-#define DIR_PIN 6
+#define STEP_PIN_1 9
+#define DIR_PIN_1 5
+#define STEP_PIN_2 10
+#define DIR_PIN_2 6
 #define END_SWITCH 11
  
 //bool dirHigh;
-bool stepHigh;
+bool stepOneHigh;
+bool stepTwoHigh;
 bool ledHigh;
 
 
 bool endSwitchTriggered;
 bool shouldToggle;
-bool stepperOn = false;
+bool stepperOneOn = false;
+bool stepperTwoOn = false;
 int switchState = 0;
 
 String inputString = "";         // a String to hold incoming data
 boolean stringComplete = false;  // whether the string is complete
-float x = 1.0;
+float x = 0.0;
+float y = 0.0;
 
-Thread* th_a_step = new Thread();
+Thread* th_a_step_one = new Thread();
+Thread* th_a_step_two = new Thread();
 Thread* th_s_serial = new Thread();
 Thread* th_s_endSwitch = new Thread();
 
-StaticThreadController<3> controller (th_a_step, th_s_serial, th_s_endSwitch);
+StaticThreadController<3> controller (th_a_step_one, th_a_step_two, th_s_serial, th_s_endSwitch);
 
-void step_callback() {
-  if (stepHigh) {
-    digitalWrite(STEP_PIN, LOW);
-    stepHigh = false;
+void step_one_callback() {
+  if (stepOneHigh) {
+    digitalWrite(STEP_PIN_1, LOW);
+    stepOneHigh = false;
   }
   else {
-    if (stepperOn) {
-      digitalWrite(STEP_PIN, HIGH);
-      stepHigh = true;
+    if (stepperOneOn) {
+      digitalWrite(STEP_PIN_1, HIGH);
+      stepOneHigh = true;
     }
   }
 //  digitalWrite(STEP_PIN, HIGH);
 //  delayMicroseconds(520);
 //  digitalWrite(STEP_PIN, LOW);
 //  Serial.println("Stepping\t\tcallback");
+}
+
+void step_two_callback() {
+  if (stepTwoHigh) {
+    digitalWrite(STEP_PIN_2, LOW);
+    stepTwoHigh = false;
+  }
+  else {
+    if (stepperTwoOn) {
+      digitalWrite(STEP_PIN_2, HIGH);
+      stepTwoHigh = true;
+    }
+  }
 }
 
 void serial_callback() {
@@ -70,12 +89,12 @@ void endSwitch_callback() {
     if (ledHigh) {
       digitalWrite(LED_BUILTIN, LOW);
       ledHigh = false;
-      stepperOn = false;
+      stepperOneOn = false;
     }
     else {
       digitalWrite(LED_BUILTIN, HIGH);
       ledHigh = true;
-      stepperOn = false;
+      stepperOneOn = false;
     }
     shouldToggle = false;
   }
@@ -91,11 +110,17 @@ void timerCallback(){
 void setup() {
   // Stepper motor
 //  dirHigh = true;
-  stepHigh = false;
-  digitalWrite(DIR_PIN, HIGH);
-  digitalWrite(STEP_PIN, LOW);
-  pinMode(DIR_PIN, OUTPUT);
-  pinMode(STEP_PIN, OUTPUT);
+  stepOneHigh = false;
+  stepTwoHigh = false;
+  digitalWrite(DIR_PIN_1, HIGH);
+  digitalWrite(STEP_PIN_1, LOW);
+  pinMode(DIR_PIN_1, OUTPUT);
+  pinMode(STEP_PIN_1, OUTPUT);
+
+  digitalWrite(DIR_PIN_2, HIGH);
+  digitalWrite(STEP_PIN_2, LOW);
+  pinMode(DIR_PIN_2, OUTPUT);
+  pinMode(STEP_PIN_2, OUTPUT);
 
   // Built-in LED
   ledHigh = false;
@@ -112,8 +137,10 @@ void setup() {
   inputString.reserve(200);
 
   // Threads
-  th_a_step->setInterval(5000/(1.0*x)); // microseconds
-  th_a_step->onRun(step_callback);  
+  th_a_step_one->setInterval(10000); // microseconds
+  th_a_step_one->onRun(step_one_callback);
+  th_a_step_two->setInterval(10000); // microseconds
+  th_a_step_two->onRun(step_two_callback);
   th_s_serial->setInterval(10000); 
   th_s_serial->onRun(serial_callback);  
   th_s_endSwitch->setInterval(10000);
@@ -129,20 +156,38 @@ void setup() {
 void loop() {
   if (stringComplete) {
     Serial.println(inputString);
+    x = inputString.substring(0,1).toFloat();
+    y = inputString.substring(1,2).toFloat();
     x = inputString.toFloat();
+    
     if (x==0) {
-      stepperOn = false;
+      stepperOneOn = false;
     }
     else {
       if (x < 0) {
-        digitalWrite(DIR_PIN, LOW);
+        digitalWrite(DIR_PIN_1, LOW);
       }
       else {
-        digitalWrite(DIR_PIN, HIGH);
+        digitalWrite(DIR_PIN_1, HIGH);
       }
       x = abs(x);
-      th_a_step->setInterval(5000/(1.0*x));
-      stepperOn = true;
+      th_a_step_one->setInterval(5000/(1.0*x));
+      stepperOneOn = true;
+    }
+
+    if (y==0) {
+      stepperTwoOn = false;
+    }
+    else {
+      if (y < 0) {
+        digitalWrite(DIR_PIN_2, LOW);
+      }
+      else {
+        digitalWrite(DIR_PIN_2, HIGH);
+      }
+      y = abs(y);
+      th_a_step_two->setInterval(5000/(1.0*y));
+      stepperTwoOn = true;
     }
     
 //    x = inputStringsubstring(1).toFloat();
