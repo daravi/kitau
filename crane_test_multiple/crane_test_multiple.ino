@@ -4,16 +4,13 @@
 #include <StaticThreadController.h>
 #include <Thread.h>
 
-
-
-
 //Pin Layout
-#define M1_DIR_PIN 6
-#define M1_STEP_PIN 7
-#define END_SWITCH_1 8
-#define M2_DIR_PIN 2
-#define M2_STEP_PIN 3
-#define END_SWITCH_2 9
+#define M1_DIR_PIN 2
+#define M1_STEP_PIN 3
+#define END_SWITCH_1 4
+#define M2_DIR_PIN 5
+#define M2_STEP_PIN 6
+#define END_SWITCH_2 7
 
 #define PRESSED_DOWN 0
 #define STOP 0
@@ -32,15 +29,15 @@ int switchTwoState = 0;
 
 String inputString = "";         // a String to hold incoming data
 bool stringComplete = false;  // whether the string is complete
-float x_pos = 0.0;
-float y_pos = 0.0;
+float x_speed = 0.0;
+float y_speed = 0.0;
 
 Thread* th_a_m1_step = new Thread();
 Thread* th_a_m2_step = new Thread();
 Thread* th_s_endSwitch = new Thread();
 
-//StaticThreadController<3> controller (th_a_m1_step, th_a_m2_step, th_s_endSwitch);
-StaticThreadController<2> controller (th_a_m1_step, th_a_m2_step);
+StaticThreadController<3> controller (th_a_m1_step, th_a_m2_step, th_s_endSwitch);
+//StaticThreadController<2> controller (th_a_m1_step, th_a_m2_step);
 
 void m1_step_callback() {
   if (m1StepHigh) {
@@ -74,10 +71,12 @@ void endSwitch_callback() {
   switchTwoState = digitalRead(END_SWITCH_2);
 
   if (switchOneState == PRESSED_DOWN) {
+    Serial.println("s1 pressed");
     m1StepperOn = false;
   }
 
   if (switchTwoState == PRESSED_DOWN) {
+    Serial.println("s2 pressed");
     m2StepperOn = false;
   }
 
@@ -126,39 +125,39 @@ void setup() {
 void loop() {
   if (stringComplete) {
 
-    x_pos = inputString.substring(0,2).toFloat();
-//    Serial.println(abs(x_pos));
-    y_pos = inputString.substring(2,4).toFloat();
-//    Serial.println(abs(y_pos));
+    x_speed = inputString.substring(0,2).toFloat();
+//    Serial.println(abs(x_speed));
+    y_speed = inputString.substring(2,4).toFloat();
+//    Serial.println(abs(y_speed));
     
     // set motor 1 speed
-    if (x_pos == STOP) {
+    if (x_speed == STOP) {
       m1StepperOn = false;
     }
     else {
-      if (x_pos < 0) {
+      if (x_speed < 0) {
         digitalWrite(M1_DIR_PIN, LOW);
       }
       else {
         digitalWrite(M1_DIR_PIN, HIGH);
       }
-      th_a_m1_step->setInterval(4000.0/abs(x_pos)); // could go down to 3750
+      th_a_m1_step->setInterval(4000.0/abs(x_speed)); // could go down to 3750
       m1StepperOn = true;
     }
 
     // set motor 2 speed
-    if (y_pos == STOP) {
+    if (y_speed == STOP) {
       m2StepperOn = false;
     }
     else {
-      if (y_pos < 0) {
+      if (y_speed < 0) {
         digitalWrite(M2_DIR_PIN, LOW);
       }
       else {
         digitalWrite(M2_DIR_PIN, HIGH);
       }
       
-      th_a_m2_step->setInterval(4000.0/abs(y_pos));
+      th_a_m2_step->setInterval(4000.0/abs(y_speed));
       m2StepperOn = true;
     }
     

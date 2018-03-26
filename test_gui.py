@@ -8,7 +8,7 @@ Website: zetcode.com
 
 import sys
 from PyQt5.QtWidgets import (QWidget, QToolTip, 
-    QPushButton, QApplication, QTextEdit)
+    QPushButton, QApplication, QTextEdit, QLabel)
 from PyQt5.QtGui import (QFont)  
 
 from PyQt5.QtCore import pyqtSlot
@@ -39,12 +39,18 @@ class CraneTest(QWidget):
         # y_pos = QLabel('Y-Position')
 
         # titleEdit = QLineEdit()
-        self.x_pos_input = QTextEdit('0.0', self)    
-        self.x_pos_input.resize(200,20)
-        self.x_pos_input.move(20, 20)
-        self.y_pos_input = QTextEdit('0.0', self)    
-        self.y_pos_input.resize(200,20)
-        self.y_pos_input.move(20, 50)
+        x_label = QLabel('X-Position', self)
+        x_label.move(10, 18)
+        self.x_pos_input = QTextEdit('', self)
+        self.x_pos_input.setPlaceholderText("0.0")
+        self.x_pos_input.resize(100,25)
+        self.x_pos_input.move(80, 15)
+        y_label = QLabel('Y-Position', self)
+        y_label.move(10, 55)
+        self.y_pos_input = QTextEdit('', self)
+        self.y_pos_input.setPlaceholderText("0.0")
+        self.y_pos_input.resize(100,25)
+        self.y_pos_input.move(80, 52)
         # authorEdit = QLineEdit()
         # reviewEdit = QTextEdit()
 
@@ -61,6 +67,8 @@ class CraneTest(QWidget):
 
     @pyqtSlot()
     def on_click(self):
+        print(self.x_pos_input.toPlainText())
+        # print(self.y_pos_input.text())
         text = self.btn.text()
         if text == "Start":
             self.btn.setText("Stop")
