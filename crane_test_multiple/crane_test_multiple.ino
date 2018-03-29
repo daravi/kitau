@@ -5,12 +5,14 @@
 #include <Thread.h>
 
 //Pin Layout
-#define M1_DIR_PIN 2
-#define M1_STEP_PIN 3
-#define END_SWITCH_1 4
-#define M2_DIR_PIN 5
-#define M2_STEP_PIN 6
-#define END_SWITCH_2 7
+#define M1_DIR_PIN 8
+#define M1_STEP_PIN 9
+#define END_SWITCH_1 24
+#define M2_DIR_PIN 26
+#define M2_STEP_PIN 27
+#define END_SWITCH_2 28
+
+#define POLISHER_PIN 53
 
 #define PRESSED_DOWN 0
 #define STOP 0
@@ -36,8 +38,8 @@ Thread* th_a_m1_step = new Thread();
 Thread* th_a_m2_step = new Thread();
 Thread* th_s_endSwitch = new Thread();
 
-StaticThreadController<3> controller (th_a_m1_step, th_a_m2_step, th_s_endSwitch);
-//StaticThreadController<2> controller (th_a_m1_step, th_a_m2_step);
+// StaticThreadController<3> controller (th_a_m1_step, th_a_m2_step, th_s_endSwitch);
+StaticThreadController<2> controller (th_a_m1_step, th_a_m2_step);
 
 void m1_step_callback() {
   if (m1StepHigh) {
@@ -71,12 +73,12 @@ void endSwitch_callback() {
   switchTwoState = digitalRead(END_SWITCH_2);
 
   if (switchOneState == PRESSED_DOWN) {
-    Serial.println("s1 pressed");
+    // Serial.println("s1 pressed");
     m1StepperOn = false;
   }
 
   if (switchTwoState == PRESSED_DOWN) {
-    Serial.println("s2 pressed");
+    // Serial.println("s2 pressed");
     m2StepperOn = false;
   }
 
@@ -107,6 +109,9 @@ void setup() {
   pinMode(END_SWITCH_1, INPUT);
   pinMode(END_SWITCH_2, INPUT);
 
+  pinMode(POLISHER_PIN, OUTPUT);
+  digitalWrite(POLISHER_PIN, LOW);
+
   // Threads
   th_a_m1_step->setInterval(10000); // microseconds
   th_a_m1_step->onRun(m1_step_callback);
@@ -126,9 +131,9 @@ void loop() {
   if (stringComplete) {
 
     x_speed = inputString.substring(0,2).toFloat();
-//    Serial.println(abs(x_speed));
+   Serial.println(abs(x_speed));
     y_speed = inputString.substring(2,4).toFloat();
-//    Serial.println(abs(y_speed));
+   Serial.println(abs(y_speed));
     
     // set motor 1 speed
     if (x_speed == STOP) {

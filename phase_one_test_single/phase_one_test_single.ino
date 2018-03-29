@@ -6,8 +6,8 @@
 
 
 
-#define DIR_PIN 22
-#define STEP_PIN 23
+#define DIR_PIN 8
+#define STEP_PIN 9
 #define END_SWITCH 11
  
 //bool dirHigh;
@@ -89,7 +89,7 @@ void timerCallback(){
 
 void setup() {
   // Stepper motor
-//  dirHigh = true;
+  // dirHigh = true;
   stepHigh = false;
   digitalWrite(DIR_PIN, HIGH);
   digitalWrite(STEP_PIN, LOW);
@@ -122,7 +122,6 @@ void setup() {
   Timer1.initialize(200);
   Timer1.attachInterrupt(timerCallback);
   Timer1.start();
-
 }
 
 void loop() {
@@ -144,13 +143,13 @@ void loop() {
       stepperOn = true;
     }
     
-//    x = inputStringsubstring(1).toFloat();
-//    if (inputString.substring(0, 1) == "s") {
-//      th_a_step->setInterval(5000/(1.0*x)); // 10 miliseconds
-//    }
-//    if (inputString.substring(0, 1) == "p") {
-//      
-//    }
+   // x = inputStringsubstring(1).toFloat();
+   // if (inputString.substring(0, 1) == "s") {
+   //   th_a_step->setInterval(5000/(1.0*x)); // 10 miliseconds
+   // }
+   // if (inputString.substring(0, 1) == "p") {
+     
+   // }
     
     // clear the string:
     inputString = "";
