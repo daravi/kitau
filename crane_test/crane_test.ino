@@ -19,12 +19,12 @@
 #define Z_DIR_POS true
 #define PRESSED_DOWN 0
 //Pin Layout
-#define M1_DIR_PIN 2
-#define M1_STEP_PIN 3
-#define END_SWITCH_1 4
-#define M2_DIR_PIN 5
-#define M2_STEP_PIN 6
-#define END_SWITCH_2 7
+#define M1_DIR_PIN 22
+#define M1_STEP_PIN 23
+#define END_SWITCH_1 24
+#define M2_DIR_PIN 26
+#define M2_STEP_PIN 27
+#define END_SWITCH_2 28
 #define M3_DIR_PIN 8
 #define M3_STEP_PIN 9
 #define END_SWITCH_3 10
