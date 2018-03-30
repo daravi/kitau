@@ -128,8 +128,8 @@ Thread* th_s_end_switch = new Thread();
 Thread* th_s_detect     = new Thread();
 
 // StaticThreadController<5> controller (th_s_detect, th_a_mx_step, th_a_my_step, th_a_mz_step, th_s_end_switch);
-StaticThreadController<4> controller (th_s_detect, th_a_mx_step, th_a_my_step, th_a_mz_step);
-// StaticThreadController<1> controller (th_a_mx_step);
+// StaticThreadController<4> controller (th_s_detect, th_a_mx_step, th_a_my_step, th_a_mz_step);
+StaticThreadController<1> controller (th_a_mx_step);
 
 void detect_callback() {
 
