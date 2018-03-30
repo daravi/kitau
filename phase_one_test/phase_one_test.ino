@@ -107,7 +107,7 @@ bool heater_on    = false;
 bool fans_on      = false;
 bool uv_on        = false;
 
-String commandString    = "";    // a String to hold incoming data
+String commandString  = "";    // holds incoming data
 bool   stringComplete = false; // whether the string is complete
 
 Thread* th_a_mx_step    = new Thread();
@@ -116,8 +116,8 @@ Thread* th_a_mz_step    = new Thread();
 Thread* th_s_end_switch = new Thread();
 Thread* th_s_detect     = new Thread();
 
-StaticThreadController<5> controller (th_s_detect, th_a_mx_step, th_a_my_step, th_a_mz_step, th_s_end_switch);
-// StaticThreadController<3> controller (th_a_mx_step, th_a_my_step, th_a_mz_step);
+// StaticThreadController<5> controller (th_s_detect, th_a_mx_step, th_a_my_step, th_a_mz_step, th_s_end_switch);
+StaticThreadController<3> controller (th_a_mx_step, th_a_my_step, th_a_mz_step);
 // StaticThreadController<1> controller (th_a_mx_step);
 
 void detect_callback() {
@@ -171,159 +171,315 @@ void detect_callback() {
   }
 }
 
-void mx_step_callback() {
-  static bool mx_step_high = false;
-  if (mx_step_high) {
-    digitalWrite(MX_STEP_PIN, LOW);
-    mx_step_high = false;
+void m_step(int pin_number, int pin_state, int motor_state, int motor_postition, int motor_direction, bool motor_positive_direction, int motor_goal) {
+  // if pin is high make it low.
+  if (pin_state) {
+    noInterrupts();
+    digitalWrite(pin_number, LOW);
+    pin_state = false;
+    interrupts();
   }
+  // if pin is low make it high if motor is also on.
   else {
-    if (mx_stepper_on) {
-      digitalWrite(MX_STEP_PIN, HIGH);
-      mx_step_high = true;
-      if (x_direction == X_POSITIVE) {
-        x_position++;
-        if (x_position >= x_goal) {
-          mx_stepper_on = false;
+    if (motor_state) {
+      noInterrupts();
+      digitalWrite(pin_number, HIGH);
+      pin_state = true;
+      interrupts();
+      // if going in "positive" direction then increment motor position
+      if (motor_direction == motor_positive_direction) {
+        motor_postition++;
+        // if motor_position is past destination then stop the motor
+        if (motor_postition >= motor_goal) {
+          motor_state = false;
         }
-      } else {
-        x_position--;
-        if (x_position <= x_goal) {
-          mx_stepper_on = false;
+      }
+      // if going in "negative" direction then decrement motor position 
+      else {
+        motor_postition--;
+        // if motor_position is past destination then stop the motor
+        if (motor_postition <= motor_goal) {
+          motor_state = false;
         }
       }
     }
   }
+} 
+
+void mx_step_callback() {
+  static bool mx_step_high = false;
+  m_step(MX_STEP_PIN, mx_step_high, mx_stepper_on, x_position, x_direction, X_POSITIVE, x_goal);
 }
 
 void my_step_callback() {
   static bool my_step_high = false;
-  if (my_step_high) {
-    digitalWrite(MY_STEP_PIN, LOW);
-    my_step_high = false;
-  }
-  else {
-    if (my_stepper_on) {
-      digitalWrite(MY_STEP_PIN, HIGH);
-      my_step_high = true;
-      if (y_direction == Y_POSITIVE) {
-        y_position++;
-        if (y_position >= y_goal) {
-          my_stepper_on = false;
-        }
-      } else {
-        y_position--;
-        if (y_position <= y_goal) {
-          my_stepper_on = false;
-        }
-      }
-    }
-  }
+  m_step(MY_STEP_PIN, my_step_high, my_stepper_on, y_position, y_direction, Y_POSITIVE, y_goal);
 }
 
 void mz_step_callback() {
   static bool mz_step_high = false;
-  if (mz_step_high) {
-    digitalWrite(MZ_STEP_PIN, LOW);
-    mz_step_high = false;
-  }
-  else {
-    if (mz_stepper_on) {
-      digitalWrite(MZ_STEP_PIN, HIGH);
-      mz_step_high = true;
-      if (z_direction == Z_POSITIVE) {
-        z_position++;
-        if (z_position >= z_goal) {
-          mz_stepper_on = false;
-        }
-      } else {
-        z_position--;
-        if (z_position <= z_goal) {
-          mz_stepper_on = false;
-        }
-      }
-    }
-  }
+  m_step(MZ_STEP_PIN, mz_step_high, mz_stepper_on, z_position, z_direction, Z_POSITIVE, z_goal);
 }
 
 void endSwitch_callback() {
-  // trigger led toggle on switch high
+  // switch states
+  static int  switch_x_start = LOW;
+  static int  switch_x_end   = LOW;
+  static int  switch_y_start = LOW;
+  static int  switch_y_end   = LOW;
+  static int  switch_z_start = LOW;
+  static int  switch_z_end   = LOW;
 
-  static int  switch_x_start = 0;
-  static int  switch_x_end   = 0;
-  static int  switch_y_start = 0;
-  static int  switch_y_end   = 0;
-  static int  switch_z_start = 0;
-  static int  switch_z_end   = 0;
-
+  noInterrupts();
   switch_x_start = digitalRead(END_SWITCH_X_START);
-  switch_x_end   = digitalRead(END_SWITCH_X_END);
-  switch_y_start = digitalRead(END_SWITCH_Y_START);
-  switch_y_end   = digitalRead(END_SWITCH_Y_END);
-  switch_z_start = digitalRead(END_SWITCH_Z_START);
-  switch_z_end   = digitalRead(END_SWITCH_Z_END);
-
-
-
-  if (switch_x_start == PRESSED_DOWN) {
-    Serial.println("x_start pressed");
-    if (x_direction == !X_POSITIVE) {
-      Serial.println("turning x-motor off...");
+  if (switch_x_start == PRESSED_DOWN && x_direction == !X_POSITIVE) {
+    // Serial.println("x_start pressed");
+    if (mx_stepper_on) {
+      // Serial.println("turning x-motor off...");
       mx_stepper_on = false;
       x_position    = 0;
       x_goal        = 0;
     }
   }
+  interrupts();
 
-  if (switch_x_end == PRESSED_DOWN) {
-    Serial.println("x_end pressed");
-    if (x_direction == X_POSITIVE) {
-      Serial.println("turning x-motor off...");
+  noInterrupts();
+  switch_x_end = digitalRead(END_SWITCH_X_END);
+  if (switch_x_end == PRESSED_DOWN && x_direction == X_POSITIVE) {
+    // Serial.println("x_end pressed");
+    if (mx_stepper_on) {
+      // Serial.println("turning x-motor off...");
       mx_stepper_on = false;
       x_limit       = x_position;
       x_goal        = x_position;
     }
   }
+  interrupts();
 
+  noInterrupts();
+  switch_y_start = digitalRead(END_SWITCH_Y_START);
   if (switch_y_start == PRESSED_DOWN) {
-    Serial.println("y_start pressed");
+    // Serial.println("y_start pressed");
     if (y_direction == !Y_POSITIVE) {
-      Serial.println("turning y-motor off...");
+      // Serial.println("turning y-motor off...");
       my_stepper_on = false;
       y_position    = 0;
       y_goal        = 0;
     }
   }
+  interrupts();
 
+  noInterrupts();
+  switch_y_end = digitalRead(END_SWITCH_Y_END);
   if (switch_y_end == PRESSED_DOWN) {
-    Serial.println("y_end pressed");
+    // Serial.println("y_end pressed");
     if (y_direction == Y_POSITIVE) {
-      Serial.println("turning y-motor off...");
+      // Serial.println("turning y-motor off...");
       my_stepper_on = false;
       y_limit       = y_position;
       y_goal        = y_position;
     }
   }
+  interrupts();
 
+  noInterrupts();
+  switch_z_start = digitalRead(END_SWITCH_Z_START);
   if (switch_z_start == PRESSED_DOWN) {
-    Serial.println("z_start pressed");
+    // Serial.println("z_start pressed");
     if (z_direction == !Z_POSITIVE) {
-      Serial.println("turning z-motor off...");
+      // Serial.println("turning z-motor off...");
       mz_stepper_on = false;
-      z_position = 0;
-      z_goal     = 0;
+      z_position    = 0;
+      z_goal        = 0;
     }
   }
+  interrupts();
 
+  noInterrupts();
+  switch_z_end = digitalRead(END_SWITCH_Z_END);
   if (switch_z_end == PRESSED_DOWN) {
-    Serial.println("z_end pressed");
+    // Serial.println("z_end pressed");
     if (z_direction == Z_POSITIVE) {
-      Serial.println("turning z-motor off...");
+      // Serial.println("turning z-motor off...");
       mz_stepper_on = false;
       z_limit       = z_position;
       z_goal        = z_position;
     }
   }
+  interrupts();
+}
+
+void reset_crane() {
+  analogWrite (MAGNET_PWM_PIN,   0  );
+  digitalWrite(MAGNET_POWER_PIN, LOW);
+  digitalWrite(POLISHER_PIN,     LOW);
+  digitalWrite(HEATER_PIN,       LOW);
+  digitalWrite(FANS_PIN,         LOW);
+  digitalWrite(UV_PIN,           LOW);
+
+  // set limit and direction
+  noInterrupts();
+  mx_stepper_on = false;
+  my_stepper_on = false;
+  mz_stepper_on = false;
+  x_position = 0;
+  y_position = 0;
+  z_position = 0;
+  x_goal = -10000;
+  y_goal = -10000;
+  z_goal = -10000;
+  x_direction = !X_POSITIVE;
+  digitalWrite(MX_DIR_PIN, x_direction);
+  y_direction = !Y_POSITIVE;
+  digitalWrite(MY_DIR_PIN, y_direction);
+  z_direction = !Z_POSITIVE;
+  digitalWrite(MZ_DIR_PIN, z_direction);
+  // Set speed
+  th_a_mx_step->setInterval(500.0);
+  th_a_my_step->setInterval(500.0);
+  th_a_mz_step->setInterval(500.0);
+  mx_stepper_on = true;
+  my_stepper_on = true;
+  mz_stepper_on = true;
+  interrupts();
+  // the interrupt will cause the infinite while loop condition to break after the motors reach the endstops
+  while (mx_stepper_on || my_stepper_on || mz_stepper_on) {
+    // Debug
+    // Serial.print("x_position");
+    // Serial.println(x_position);
+    // if (!mx_stepper_on && !my_stepper_on && !mz_stepper_on) break;
+  };
+
+  // set limit and direction
+  noInterrupts();
+  mx_stepper_on = false;
+  my_stepper_on = false;
+  mz_stepper_on = false;
+  x_position = 0;
+  y_position = 0;
+  z_position = 0;
+  x_goal = 10000;
+  y_goal = 10000;
+  z_goal = 10000;
+  x_direction = X_POSITIVE;
+  digitalWrite(MX_DIR_PIN, X_POSITIVE);
+  y_direction = Y_POSITIVE;
+  digitalWrite(MY_DIR_PIN, Y_POSITIVE);
+  z_direction = Z_POSITIVE;  
+  digitalWrite(MZ_DIR_PIN, Z_POSITIVE);
+  // Set speed
+  th_a_mx_step->setInterval(500.0);
+  th_a_my_step->setInterval(500.0);
+  // th_a_mz_step->setInterval(500.0);
+  mx_stepper_on = true;
+  my_stepper_on = true;
+  // mz_stepper_on = true;
+  interrupts();
+  // the interrupt will cause the infinite while loop condition to break after the motors reach the endstops
+  while (mx_stepper_on || my_stepper_on || mz_stepper_on) {
+    // Debug
+    // Serial.print("x_position");
+    // Serial.println(x_position);
+    // if (!mx_stepper_on && !my_stepper_on && !mz_stepper_on) break;
+  };
+}
+
+void manual_crane(String commandString) {
+  noInterrupts();
+  magnet_on    = commandString.substring(16,17).toInt();
+  magnet_lvl   = commandString.substring(17,20).toInt();
+  vibration_on = commandString.substring(20,21).toInt();
+  heater_on    = commandString.substring(21,22).toInt();
+  fans_on      = commandString.substring(22,23).toInt();
+  uv_on        = commandString.substring(23,24).toInt();
+  digitalWrite(MAGNET_POWER_PIN, magnet_on   );
+  analogWrite (MAGNET_PWM_PIN,   magnet_lvl  );
+  digitalWrite(POLISHER_PIN,     vibration_on);
+  digitalWrite(HEATER_PIN,       heater_on   );
+  digitalWrite(FANS_PIN,         fans_on     );
+  digitalWrite(UV_PIN,           uv_on       );
+  interrupts();
+
+  // X Control
+  noInterrupts();
+  x_speed      = commandString.substring(1,  3).toInt();
+  x_goal       = commandString.substring(7, 10).toInt();
+  if (x_speed == STOP) {
+    mx_stepper_on = false;
+  }
+  else {
+    // Set position limit (limit number of steps)
+    x_goal = STEP_SIZE * x_goal;
+    // Set motor direction
+    if (x_goal < x_position) {
+      x_direction = !X_POSITIVE;
+      digitalWrite(MX_DIR_PIN, !X_POSITIVE);
+      Serial.println("setting x dir to low");
+    }
+    else {
+      x_direction = X_POSITIVE;
+      digitalWrite(MX_DIR_PIN, X_POSITIVE);
+      Serial.println("setting x dir to high");
+    }
+    // Set speed
+    th_a_mx_step->setInterval(4000.0/abs(x_speed)); // could go down to 3750
+    mx_stepper_on = true;
+  }
+  interrupts();
+
+  // Y Control
+  noInterrupts();
+  y_speed      = commandString.substring(3,  5).toInt();
+  y_goal       = commandString.substring(10,13).toInt();
+  if (y_speed == STOP) {
+    my_stepper_on = false;
+  }
+  else {
+    // Set position limit (limit number of steps)
+    y_goal = STEP_SIZE * y_goal;
+    // Set motor direction
+    if (y_goal < y_position) {
+      y_direction = !Y_POSITIVE;
+      digitalWrite(MY_DIR_PIN, !Y_POSITIVE);
+      Serial.println("setting y dir to low");
+    }
+    else {
+      y_direction = Y_POSITIVE;
+      digitalWrite(MY_DIR_PIN, Y_POSITIVE);
+      Serial.println("setting y dir to high");
+    }
+    // Set speed
+    th_a_my_step->setInterval(4000.0/abs(y_speed));
+    my_stepper_on = true;
+  }
+  interrupts();
+
+  // Z Control
+  noInterrupts();
+  z_speed      = commandString.substring(5,  7).toInt();
+  z_goal       = commandString.substring(13,16).toInt();
+  if (z_speed == STOP) {
+    mz_stepper_on = false;
+  }
+  else {
+    // Set position limit (limit number of steps)
+    z_goal = STEP_SIZE * z_goal;
+    // Set motor direction
+    if (z_goal < z_position) {
+      z_direction = !Z_POSITIVE;
+      Serial.println("setting z dir to low");
+      digitalWrite(MZ_DIR_PIN, !Z_POSITIVE);
+    }
+    else {
+      z_direction = Z_POSITIVE;
+      Serial.println("setting z dir to high");
+      digitalWrite(MZ_DIR_PIN, Z_POSITIVE);
+    }
+    // Set speed
+    th_a_mz_step->setInterval(4000.0/abs(z_speed));
+    mz_stepper_on = true;
+  }
+  interrupts();
 }
 
 // This is the callback for the Timer
@@ -396,261 +552,12 @@ void setup() {
   Timer1.start();
 }
 
-
-// void loop() {
-//   if (stringComplete) {
-//     // sample inputs: 
-//     // off: 0
-//     // reset: 1
-//     // manual, speeds:3, positions: 5, else: off --> 0, 201010102020200000000
-
-//     // Debug
-//     Serial.println(commandString);
-
-//     // Decoding the input command into actuation signals
-//     crane_mode   = commandString.substring(0,  1).toInt();
-//     x_speed      = commandString.substring(1,  3).toInt();
-//     y_speed      = commandString.substring(3,  5).toInt();
-//     z_speed      = commandString.substring(5,  7).toInt();
-//     x_goal       = commandString.substring(7,  9).toInt();
-//     y_goal       = commandString.substring(9, 11).toInt();
-//     z_goal       = commandString.substring(11,13).toInt();
-//     magnet_on    = commandString.substring(13,14).toInt();
-//     magnet_lvl   = commandString.substring(14,17).toInt();
-//     vibration_on = commandString.substring(17,18).toInt();
-//     heater_on    = commandString.substring(18,19).toInt();
-//     fans_on      = commandString.substring(19,20).toInt();
-//     uv_on        = commandString.substring(20,21).toInt();
-    
-//     Serial.print("Crane mode: ");
-//     Serial.println(crane_mode);
-//     Serial.print("X speed: ");
-//     Serial.println(x_speed);
-//     Serial.print("Y speed: ");
-//     Serial.println(y_speed);
-//     Serial.print("Z speed: ");
-//     Serial.println(z_speed);
-//     Serial.print("X goal: ");
-//     Serial.println(x_goal);
-//     Serial.print("Y goal: ");
-//     Serial.println(y_goal);
-//     Serial.print("Z goal: ");
-//     Serial.println(z_goal);
-//     Serial.print("magnet_on: ");
-//     Serial.println(magnet_on);
-//     Serial.print("magnet_lvl: ");
-//     Serial.println(magnet_lvl);
-//     Serial.print("vibration_on: ");
-//     Serial.println(vibration_on);
-//     Serial.print("heater_on: ");
-//     Serial.println(heater_on);
-//     Serial.print("fans_on: ");
-//     Serial.println(fans_on);
-//     Serial.print("uv_on: ");
-//     Serial.println(uv_on);
-    
-
-
-//     switch (crane_mode) {
-
-
-//         case OFF:
-//           /*
-//             Off mode: turn all components off immediately
-//           */
-
-//           mx_stepper_on = false;
-//           my_stepper_on = false;
-//           mz_stepper_on = false;
-//           analogWrite (MAGNET_PWM_PIN,   0  );
-//           digitalWrite(MAGNET_POWER_PIN, LOW);
-//           digitalWrite(POLISHER_PIN,     LOW);
-//           digitalWrite(HEATER_PIN,       LOW);
-//           digitalWrite(FANS_PIN,         LOW);
-//           digitalWrite(UV_PIN,           LOW);
-
-//           break;
-
-
-//         case RESET:
-//           /*
-//             Reset mode:
-//               - go to position (0, 0) and reset the counts to zero
-//               - go to position (end, end) and set limits
-//               - turn all else off
-//           */
-
-//           // Debug
-//           Serial.println("In reset mode...");
-
-//           analogWrite (MAGNET_PWM_PIN,   0  );
-//           digitalWrite(MAGNET_POWER_PIN, LOW);
-//           digitalWrite(POLISHER_PIN,     LOW);
-//           digitalWrite(HEATER_PIN,       LOW);
-//           digitalWrite(FANS_PIN,         LOW);
-//           digitalWrite(UV_PIN,           LOW);
-
-//           // set limit and direction
-//           x_goal = -10000;
-//           y_goal = -10000;
-//           z_goal = -10000;
-//           x_direction = !X_POSITIVE;
-//           digitalWrite(MX_DIR_PIN, !X_POSITIVE);
-//           y_direction = !Y_POSITIVE;
-//           digitalWrite(MY_DIR_PIN, !Y_POSITIVE);
-//           z_direction = !Z_POSITIVE;
-//           digitalWrite(MZ_DIR_PIN, !Z_POSITIVE);
-//           // Set speed
-//           th_a_mx_step->setInterval(500.0);
-//           th_a_my_step->setInterval(500.0);
-//           th_a_mz_step->setInterval(500.0);
-//           mx_stepper_on = true;
-//           my_stepper_on = true;
-//           mz_stepper_on = true;
-//           while (mx_stepper_on || my_stepper_on || mz_stepper_on) {
-//             // Debug
-//             Serial.print("x_position");
-//             Serial.println(x_position);
-//           };
-
-//           // set limit and direction
-//           x_goal = 10000;
-//           y_goal = 10000;
-//           z_goal = 10000;
-//           x_direction = X_POSITIVE;
-//           digitalWrite(MX_DIR_PIN, X_POSITIVE);
-//           y_direction = Y_POSITIVE;
-//           digitalWrite(MY_DIR_PIN, Y_POSITIVE);
-//           // z_direction = Z_POSITIVE;
-//           // digitalWrite(MZ_DIR_PIN, Z_POSITIVE);
-//           // Set speed
-//           th_a_mx_step->setInterval(500.0);
-//           th_a_my_step->setInterval(500.0);
-//           // th_a_mz_step->setInterval(500.0);
-//           mx_stepper_on = true;
-//           my_stepper_on = true;
-//           // mz_stepper_on = true;
-//           while (mx_stepper_on || my_stepper_on || mz_stepper_on) {
-//             // Debug
-//             Serial.print("x_position");
-//             Serial.println(x_position);
-//           };
-
-//           Serial.print("x_limit: ");
-//           Serial.println(x_limit);
-//           Serial.print("y_limit: ");
-//           Serial.println(y_limit);
-//           Serial.print("z_limit: ");
-//           Serial.println(z_limit);
-        
-
-//         case MANUAL:
-//           /*
-//             Manual mode: set all settings according to input 
-//             recieved from serial.
-//           */
-
-//           // Debug
-//           Serial.println("in manual mode...");
-
-//           analogWrite (MAGNET_PWM_PIN,   magnet_lvl  );
-//           digitalWrite(MAGNET_POWER_PIN, magnet_on   );
-//           digitalWrite(POLISHER_PIN,     vibration_on);
-//           digitalWrite(HEATER_PIN,       heater_on   );
-//           digitalWrite(FANS_PIN,         fans_on     );
-//           digitalWrite(UV_PIN,           uv_on       );
-
-//           // X Control
-//           if (x_speed == STOP) {
-//             mx_stepper_on = false;
-//           }
-//           else {
-//             // Set position limit (limit number of steps)
-//             x_goal = 100 * x_goal;
-//             // Set motor direction
-//             if (x_goal < x_position) {
-//               x_direction = !X_POSITIVE;
-//               digitalWrite(MX_DIR_PIN, LOW);
-//               Serial.println("setting dir to low");
-//             }
-//             else {
-//               x_direction = X_POSITIVE;
-//               digitalWrite(MX_DIR_PIN, HIGH);
-//               Serial.println("setting dir to high");
-//             }
-//             // Set speed
-//             th_a_mx_step->setInterval(4000.0/abs(x_speed)); // could go down to 3750
-//             mx_stepper_on = true;
-//           }
-//           // Y Control
-//           if (y_speed == STOP) {
-//             my_stepper_on = false;
-//           }
-//           else {
-//             // Set position limit (limit number of steps)
-//             y_goal = 100 * y_goal;
-//             // Set motor direction
-//             if (y_goal < y_position) {
-//               y_direction = !Y_POSITIVE;
-//               digitalWrite(MY_DIR_PIN, LOW);
-//             }
-//             else {
-//               y_direction = Y_POSITIVE;
-//               digitalWrite(MY_DIR_PIN, HIGH);
-//             }
-//             // Set speed
-//             th_a_my_step->setInterval(4000.0/abs(y_speed));
-//             my_stepper_on = true;
-//           }
-//           // Z Control
-//           if (z_speed == STOP) {
-//             mz_stepper_on = false;
-//           }
-//           else {
-//             // Set position limit (limit number of steps)
-//             z_goal = 100 * z_goal;
-//             // Set motor direction
-//             if (z_goal < z_position) {
-//               z_direction = !Z_POSITIVE;
-//               digitalWrite(MZ_DIR_PIN, LOW);
-//             }
-//             else {
-//               z_direction = Z_POSITIVE;
-//               digitalWrite(MZ_DIR_PIN, HIGH);
-//             }
-//             // Set speed
-//             th_a_mz_step->setInterval(4000.0/abs(z_speed));
-//             mz_stepper_on = true;
-//           }
-
-//           break;
-
-
-//         case AUTO:
-//           /*
-//             Auto mode: final design
-//             TODO - implement auto based on designed FSM
-//           */
-//           break;
-
-
-//         default:
-//           break;
-//           // do something
-//     }
-    
-//     // clear the string:
-//     commandString = "";
-//     stringComplete = false;
-//   }
-// }
-
 void loop() {
   if (stringComplete) {
     // sample inputs: 
     // off: 0
     // reset: 1
-    // manual, speeds:3, positions: 5, else: off --> 0, 201010002020000000000
+    // manual, speeds:3, positions: 5, else: off --> 0, 201010000200200000000000
 
     // Debug
     Serial.println(commandString);
@@ -660,15 +567,15 @@ void loop() {
     x_speed      = commandString.substring(1,  3).toInt();
     y_speed      = commandString.substring(3,  5).toInt();
     z_speed      = commandString.substring(5,  7).toInt();
-    x_goal       = commandString.substring(7,  9).toInt();
-    y_goal       = commandString.substring(9, 11).toInt();
-    z_goal       = commandString.substring(11,13).toInt();
-    magnet_on    = commandString.substring(13,14).toInt();
-    magnet_lvl   = commandString.substring(14,17).toInt();
-    vibration_on = commandString.substring(17,18).toInt();
-    heater_on    = commandString.substring(18,19).toInt();
-    fans_on      = commandString.substring(19,20).toInt();
-    uv_on        = commandString.substring(20,21).toInt();
+    x_goal       = commandString.substring(7, 10).toInt();
+    y_goal       = commandString.substring(10,13).toInt();
+    z_goal       = commandString.substring(13,16).toInt();
+    magnet_on    = commandString.substring(16,17).toInt();
+    magnet_lvl   = commandString.substring(17,20).toInt();
+    vibration_on = commandString.substring(20,21).toInt();
+    heater_on    = commandString.substring(21,22).toInt();
+    fans_on      = commandString.substring(22,23).toInt();
+    uv_on        = commandString.substring(23,24).toInt();
     
     Serial.print("Crane mode: ");
     Serial.println(crane_mode);
@@ -680,10 +587,13 @@ void loop() {
     Serial.println(z_speed);
     Serial.print("X goal: ");
     Serial.println(x_goal);
+    Serial.println(commandString.substring(7, 10).toInt());
     Serial.print("Y goal: ");
     Serial.println(y_goal);
+    Serial.println(commandString.substring(10, 13).toInt());
     Serial.print("Z goal: ");
     Serial.println(z_goal);
+    Serial.println(commandString.substring(13, 16).toInt());
     Serial.print("magnet_on: ");
     Serial.println(magnet_on);
     Serial.print("magnet_lvl: ");
@@ -730,60 +640,8 @@ void loop() {
 
           // Debug
           Serial.println("In reset mode...");
-
-          analogWrite (MAGNET_PWM_PIN,   0  );
-          digitalWrite(MAGNET_POWER_PIN, LOW);
-          digitalWrite(POLISHER_PIN,     LOW);
-          digitalWrite(HEATER_PIN,       LOW);
-          digitalWrite(FANS_PIN,         LOW);
-          digitalWrite(UV_PIN,           LOW);
-
-          // set limit and direction
-          x_goal = -10000;
-          y_goal = -10000;
-          z_goal = -10000;
-          x_direction = !X_POSITIVE;
-          digitalWrite(MX_DIR_PIN, !X_POSITIVE);
-          y_direction = !Y_POSITIVE;
-          digitalWrite(MY_DIR_PIN, !Y_POSITIVE);
-          z_direction = !Z_POSITIVE;
-          digitalWrite(MZ_DIR_PIN, !Z_POSITIVE);
-          // Set speed
-          th_a_mx_step->setInterval(500.0);
-          th_a_my_step->setInterval(500.0);
-          th_a_mz_step->setInterval(500.0);
-          mx_stepper_on = true;
-          my_stepper_on = true;
-          mz_stepper_on = true;
-          while (mx_stepper_on || my_stepper_on || mz_stepper_on) {
-            // Debug
-            Serial.print("x_position");
-            Serial.println(x_position);
-          };
-
-          // set limit and direction
-          x_goal = 10000;
-          y_goal = 10000;
-          z_goal = 10000;
-          x_direction = X_POSITIVE;
-          digitalWrite(MX_DIR_PIN, X_POSITIVE);
-          y_direction = Y_POSITIVE;
-          digitalWrite(MY_DIR_PIN, Y_POSITIVE);
-          z_direction = Z_POSITIVE;  
-          digitalWrite(MZ_DIR_PIN, Z_POSITIVE);
-          // Set speed
-          th_a_mx_step->setInterval(500.0);
-          th_a_my_step->setInterval(500.0);
-          // th_a_mz_step->setInterval(500.0);
-          mx_stepper_on = true;
-          my_stepper_on = true;
-          // mz_stepper_on = true;
-          while (mx_stepper_on || my_stepper_on || mz_stepper_on) {
-            // Debug
-            Serial.print("x_position");
-            Serial.println(x_position);
-          };
-
+          reset_crane();
+          // Debug
           Serial.print("x_limit: ");
           Serial.println(x_limit);
           Serial.print("y_limit: ");
@@ -799,81 +657,10 @@ void loop() {
           */
 
           // Debug
-          Serial.println("in manual mode...");
-
-          analogWrite (MAGNET_PWM_PIN,   magnet_lvl  );
-          digitalWrite(MAGNET_POWER_PIN, magnet_on   );
-          digitalWrite(POLISHER_PIN,     vibration_on);
-          digitalWrite(HEATER_PIN,       heater_on   );
-          digitalWrite(FANS_PIN,         fans_on     );
-          digitalWrite(UV_PIN,           uv_on       );
-
-          // X Control
-          if (x_speed == STOP) {
-            mx_stepper_on = false;
-          }
-          else {
-            // Set position limit (limit number of steps)
-            x_goal = STEP_SIZE * x_goal;
-            // Set motor direction
-            if (x_goal < x_position) {
-              x_direction = !X_POSITIVE;
-              digitalWrite(MX_DIR_PIN, !X_POSITIVE);
-              Serial.println("setting x dir to low");
-            }
-            else {
-              x_direction = X_POSITIVE;
-              digitalWrite(MX_DIR_PIN, X_POSITIVE);
-              Serial.println("setting x dir to high");
-            }
-            // Set speed
-            th_a_mx_step->setInterval(4000.0/abs(x_speed)); // could go down to 3750
-            mx_stepper_on = true;
-          }
-          // Y Control
-          if (y_speed == STOP) {
-            my_stepper_on = false;
-          }
-          else {
-            // Set position limit (limit number of steps)
-            y_goal = STEP_SIZE * y_goal;
-            // Set motor direction
-            if (y_goal < y_position) {
-              y_direction = !Y_POSITIVE;
-              digitalWrite(MY_DIR_PIN, !Y_POSITIVE);
-              Serial.println("setting y dir to low");
-            }
-            else {
-              y_direction = Y_POSITIVE;
-              digitalWrite(MY_DIR_PIN, Y_POSITIVE);
-              Serial.println("setting y dir to high");
-            }
-            // Set speed
-            th_a_my_step->setInterval(4000.0/abs(y_speed));
-            my_stepper_on = true;
-          }
-          // Z Control
-          if (z_speed == STOP) {
-            mz_stepper_on = false;
-          }
-          else {
-            // Set position limit (limit number of steps)
-            z_goal = STEP_SIZE * z_goal;
-            // Set motor direction
-            if (z_goal < z_position) {
-              z_direction = !Z_POSITIVE;
-              Serial.println("setting z dir to low");
-              digitalWrite(MZ_DIR_PIN, !Z_POSITIVE);
-            }
-            else {
-              z_direction = Z_POSITIVE;
-              Serial.println("setting z dir to high");
-              digitalWrite(MZ_DIR_PIN, Z_POSITIVE);
-            }
-            // Set speed
-            th_a_mz_step->setInterval(4000.0/abs(z_speed));
-            mz_stepper_on = true;
-          }
+          Serial.println("In manual mode...");
+          manual_crane(commandString);
+          // Debug
+          // Serial.println("Speed and destination set to: () and ()");
 
           break;
 
