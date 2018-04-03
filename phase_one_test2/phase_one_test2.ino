@@ -14,9 +14,9 @@
 #include <Thread.h>
 
 // change these based on setup
-#define X_POSITIVE 1
-#define Y_POSITIVE 1
-#define Z_POSITIVE 1
+#define X_POSITIVE true
+#define Y_POSITIVE false
+#define Z_POSITIVE true
 
 #define W_FORK      600
 #define W_SPOON     400
@@ -25,7 +25,8 @@
 #define W_SCALE     1.0
 
 // Number of values to average for weight sensor filtering (1: no filtering, max: 10000)
-#define WEIGHT_BUFFER_SIZE 100
+#define W_FILTER_COUNT 100
+#define STEP_SIZE      200
 
 /* Pin Layout */
 // Crane
@@ -54,8 +55,6 @@
 /* readability */
 #define STOP         0
 #define PRESSED_DOWN 0
-#define POSITIVE     1
-#define NEGATIVE     0
 
 // crane modes
 #define OFF          0
@@ -96,9 +95,6 @@ enum LoadType {
 };
 LoadType load = NoLoad;
 
-bool mx_step_high  = false;
-bool my_step_high  = false;
-bool mz_step_high  = false;
 bool mx_stepper_on = false;
 bool my_stepper_on = false;
 bool mz_stepper_on = false;
@@ -111,13 +107,6 @@ bool heater_on    = false;
 bool fans_on      = false;
 bool uv_on        = false;
 
-int  switch_x_start = 0;
-int  switch_x_end   = 0;
-int  switch_y_start = 0;
-int  switch_y_end   = 0;
-int  switch_z_start = 0;
-int  switch_z_end   = 0;
-
 String commandString    = "";    // a String to hold incoming data
 bool   stringComplete = false; // whether the string is complete
 
@@ -127,78 +116,78 @@ Thread* th_a_mz_step    = new Thread();
 Thread* th_s_end_switch = new Thread();
 Thread* th_s_detect     = new Thread();
 
-// StaticThreadController<5> controller (th_s_detect, th_a_mx_step, th_a_my_step, th_a_mz_step, th_s_end_switch);
-// StaticThreadController<4> controller (th_s_detect, th_a_mx_step, th_a_my_step, th_a_mz_step);
-StaticThreadController<1> controller (th_a_mx_step);
+StaticThreadController<5> controller (th_s_detect, th_a_mx_step, th_a_my_step, th_a_mz_step, th_s_end_switch);
+// StaticThreadController<3> controller (th_a_mx_step, th_a_my_step, th_a_mz_step);
+// StaticThreadController<1> controller (th_a_mx_step);
 
 void detect_callback() {
+  static float w_total = 0;
+  static float w_average = 0;
+  static int count = 0;
 
-  // if (count >= FILTER_COUNT) {
-  //   w_average = w_total * 1.0 / FILTER_COUNT; // cast to float
-  // }
+  w_total += analogRead(LOAD_SENSOR_PIN) * W_SCALE;
+  count += 1;
 
+  if (count >= W_FILTER_COUNT) {
+    w_average = w_total / (float)W_FILTER_COUNT; // cast to float
+    Serial.print("average weight: ");
+    Serial.println(w_average);
 
+    if (w_average < 10 * W_TOLERANCE) {
+      load = NoLoad;
+    } else if (w_average > (W_FORK - W_TOLERANCE) && w_average < (W_FORK + W_TOLERANCE)) {
+      load = Fork;
+    } else if (w_average > (W_SPOON - W_TOLERANCE) && w_average < (W_SPOON + W_TOLERANCE)) {
+      load = Spoon;
+    } else if (w_average > (W_KNIFE - W_TOLERANCE) && w_average < (W_KNIFE + W_TOLERANCE)) {
+      load = Knive;
+    } else {
+      load = Unknown;
+    }
 
+    switch (load) {
+        case NoLoad:
+          Serial.println("No load detected.");
+          break;
+        case Fork:
+          Serial.println("Detected load: Fork");
+          break;
+        case Spoon:
+          Serial.println("Detected load: Spoon");
+          break;
+        case Knive:
+          Serial.println("Detected load: Knive");
+          break;
+        case Unknown:
+          Serial.println("Detected load: Unknown");
+          break;
+        default:
+          break;
+          // do something
+    }
 
-  weight = analogRead(LOAD_SENSOR_PIN) * W_SCALE;
-  // Serial.print("Load value: ");
-  // Serial.println(weight);
-  if (weight < 10 * W_TOLERANCE) {
-    load = NoLoad;
-  } else if (weight > (W_FORK - W_TOLERANCE) && weight < (W_FORK + W_TOLERANCE)) {
-    load = Fork;
-  } else if (weight > (W_SPOON - W_TOLERANCE) && weight < (W_SPOON + W_TOLERANCE)) {
-    load = Spoon;
-  } else if (weight > (W_KNIFE - W_TOLERANCE) && weight < (W_KNIFE + W_TOLERANCE)) {
-    load = Knive;
-  } else {
-    load = Unknown;
-  }
-
-  switch (load) {
-      case NoLoad:
-        Serial.println("No load detected.");
-        break;
-      case Fork:
-        Serial.println("Detected load: Fork");
-        break;
-      case Spoon:
-        Serial.println("Detected load: Spoon");
-        break;
-      case Knive:
-        Serial.println("Detected load: Knive");
-        break;
-      case Unknown:
-        Serial.println("Detected load: Unknown");
-        break;
-      default:
-        break;
-        // do something
+    count = 0;
+    w_total = 0;
   }
 }
 
 void mx_step_callback() {
+  static bool mx_step_high = false;
   if (mx_step_high) {
     digitalWrite(MX_STEP_PIN, LOW);
-    // Serial.println("x low");
     mx_step_high = false;
   }
   else {
     if (mx_stepper_on) {
       digitalWrite(MX_STEP_PIN, HIGH);
-      // Serial.println("x high");
       mx_step_high = true;
-      if (x_direction == POSITIVE) {
+      if (x_direction == X_POSITIVE) {
         x_position++;
-        // Serial.print("x_position ");
-        // Serial.println(x_position);
         if (x_position >= x_goal) {
           mx_stepper_on = false;
         }
       } else {
         x_position--;
-        // Serial.print("x_position ");
-        // Serial.println(x_position);
         if (x_position <= x_goal) {
           mx_stepper_on = false;
         }
@@ -208,6 +197,7 @@ void mx_step_callback() {
 }
 
 void my_step_callback() {
+  static bool my_step_high = false;
   if (my_step_high) {
     digitalWrite(MY_STEP_PIN, LOW);
     my_step_high = false;
@@ -216,10 +206,8 @@ void my_step_callback() {
     if (my_stepper_on) {
       digitalWrite(MY_STEP_PIN, HIGH);
       my_step_high = true;
-      if (y_direction == POSITIVE) {
+      if (y_direction == Y_POSITIVE) {
         y_position++;
-        // Serial.print("y_position");
-        // Serial.println(y_position);
         if (y_position >= y_goal) {
           my_stepper_on = false;
         }
@@ -234,6 +222,7 @@ void my_step_callback() {
 }
 
 void mz_step_callback() {
+  static bool mz_step_high = false;
   if (mz_step_high) {
     digitalWrite(MZ_STEP_PIN, LOW);
     mz_step_high = false;
@@ -242,10 +231,8 @@ void mz_step_callback() {
     if (mz_stepper_on) {
       digitalWrite(MZ_STEP_PIN, HIGH);
       mz_step_high = true;
-      if (z_direction == POSITIVE) {
+      if (z_direction == Z_POSITIVE) {
         z_position++;
-        // Serial.print("z_position");
-        // Serial.println(z_position);
         if (z_position >= z_goal) {
           mz_stepper_on = false;
         }
@@ -261,6 +248,14 @@ void mz_step_callback() {
 
 void endSwitch_callback() {
   // trigger led toggle on switch high
+
+  static int  switch_x_start = 0;
+  static int  switch_x_end   = 0;
+  static int  switch_y_start = 0;
+  static int  switch_y_end   = 0;
+  static int  switch_z_start = 0;
+  static int  switch_z_end   = 0;
+
   switch_x_start = digitalRead(END_SWITCH_X_START);
   switch_x_end   = digitalRead(END_SWITCH_X_END);
   switch_y_start = digitalRead(END_SWITCH_Y_START);
@@ -268,51 +263,65 @@ void endSwitch_callback() {
   switch_z_start = digitalRead(END_SWITCH_Z_START);
   switch_z_end   = digitalRead(END_SWITCH_Z_END);
 
+
+
   if (switch_x_start == PRESSED_DOWN) {
     Serial.println("x_start pressed");
-    if (x_direction == NEGATIVE) {
+    if (x_direction == !X_POSITIVE) {
+      Serial.println("turning x-motor off...");
       mx_stepper_on = false;
-      x_position = 0;
+      x_position    = 0;
+      x_goal        = 0;
     }
   }
 
   if (switch_x_end == PRESSED_DOWN) {
     Serial.println("x_end pressed");
-    if (x_direction == POSITIVE) {
+    if (x_direction == X_POSITIVE) {
+      Serial.println("turning x-motor off...");
       mx_stepper_on = false;
       x_limit       = x_position;
+      x_goal        = x_position;
     }
   }
 
   if (switch_y_start == PRESSED_DOWN) {
     Serial.println("y_start pressed");
-    if (y_direction == NEGATIVE) {
+    if (y_direction == !Y_POSITIVE) {
+      Serial.println("turning y-motor off...");
       my_stepper_on = false;
-      y_position = 0;
+      y_position    = 0;
+      y_goal        = 0;
     }
   }
 
   if (switch_y_end == PRESSED_DOWN) {
     Serial.println("y_end pressed");
-    if (y_direction == POSITIVE) {
+    if (y_direction == Y_POSITIVE) {
+      Serial.println("turning y-motor off...");
       my_stepper_on = false;
       y_limit       = y_position;
+      y_goal        = y_position;
     }
   }
 
   if (switch_z_start == PRESSED_DOWN) {
     Serial.println("z_start pressed");
-    if (z_direction == NEGATIVE) {
+    if (z_direction == !Z_POSITIVE) {
+      Serial.println("turning z-motor off...");
       mz_stepper_on = false;
       z_position = 0;
+      z_goal     = 0;
     }
   }
 
   if (switch_z_end == PRESSED_DOWN) {
     Serial.println("z_end pressed");
-    if (z_direction == POSITIVE) {
+    if (z_direction == Z_POSITIVE) {
+      Serial.println("turning z-motor off...");
       mz_stepper_on = false;
       z_limit       = z_position;
+      z_goal        = z_position;
     }
   }
 }
@@ -562,12 +571,12 @@ void setup() {
 //             if (x_goal < x_position) {
 //               x_direction = !X_POSITIVE;
 //               digitalWrite(MX_DIR_PIN, LOW);
-//               Serial.println("changing dir to low");
+//               Serial.println("setting dir to low");
 //             }
 //             else {
 //               x_direction = X_POSITIVE;
 //               digitalWrite(MX_DIR_PIN, HIGH);
-//               Serial.println("changing dir to high");
+//               Serial.println("setting dir to high");
 //             }
 //             // Set speed
 //             th_a_mx_step->setInterval(4000.0/abs(x_speed)); // could go down to 3750
@@ -641,7 +650,7 @@ void loop() {
     // sample inputs: 
     // off: 0
     // reset: 1
-    // manual, speeds:3, positions: 5, else: off --> 0, 201010102020200000000
+    // manual, speeds:3, positions: 5, else: off --> 0, 201010002020000000000
 
     // Debug
     Serial.println(commandString);
@@ -760,8 +769,8 @@ void loop() {
           digitalWrite(MX_DIR_PIN, X_POSITIVE);
           y_direction = Y_POSITIVE;
           digitalWrite(MY_DIR_PIN, Y_POSITIVE);
-          // z_direction = Z_POSITIVE;
-          // digitalWrite(MZ_DIR_PIN, Z_POSITIVE);
+          z_direction = Z_POSITIVE;  
+          digitalWrite(MZ_DIR_PIN, Z_POSITIVE);
           // Set speed
           th_a_mx_step->setInterval(500.0);
           th_a_my_step->setInterval(500.0);
@@ -805,17 +814,17 @@ void loop() {
           }
           else {
             // Set position limit (limit number of steps)
-            x_goal = 100 * x_goal;
+            x_goal = STEP_SIZE * x_goal;
             // Set motor direction
             if (x_goal < x_position) {
               x_direction = !X_POSITIVE;
-              digitalWrite(MX_DIR_PIN, LOW);
-              Serial.println("changing dir to low");
+              digitalWrite(MX_DIR_PIN, !X_POSITIVE);
+              Serial.println("setting x dir to low");
             }
             else {
               x_direction = X_POSITIVE;
-              digitalWrite(MX_DIR_PIN, HIGH);
-              Serial.println("changing dir to high");
+              digitalWrite(MX_DIR_PIN, X_POSITIVE);
+              Serial.println("setting x dir to high");
             }
             // Set speed
             th_a_mx_step->setInterval(4000.0/abs(x_speed)); // could go down to 3750
@@ -827,15 +836,17 @@ void loop() {
           }
           else {
             // Set position limit (limit number of steps)
-            y_goal = 100 * y_goal;
+            y_goal = STEP_SIZE * y_goal;
             // Set motor direction
             if (y_goal < y_position) {
               y_direction = !Y_POSITIVE;
-              digitalWrite(MY_DIR_PIN, LOW);
+              digitalWrite(MY_DIR_PIN, !Y_POSITIVE);
+              Serial.println("setting y dir to low");
             }
             else {
               y_direction = Y_POSITIVE;
-              digitalWrite(MY_DIR_PIN, HIGH);
+              digitalWrite(MY_DIR_PIN, Y_POSITIVE);
+              Serial.println("setting y dir to high");
             }
             // Set speed
             th_a_my_step->setInterval(4000.0/abs(y_speed));
@@ -847,15 +858,17 @@ void loop() {
           }
           else {
             // Set position limit (limit number of steps)
-            z_goal = 100 * z_goal;
+            z_goal = STEP_SIZE * z_goal;
             // Set motor direction
             if (z_goal < z_position) {
               z_direction = !Z_POSITIVE;
-              digitalWrite(MZ_DIR_PIN, LOW);
+              Serial.println("setting z dir to low");
+              digitalWrite(MZ_DIR_PIN, !Z_POSITIVE);
             }
             else {
               z_direction = Z_POSITIVE;
-              digitalWrite(MZ_DIR_PIN, HIGH);
+              Serial.println("setting z dir to high");
+              digitalWrite(MZ_DIR_PIN, Z_POSITIVE);
             }
             // Set speed
             th_a_mz_step->setInterval(4000.0/abs(z_speed));

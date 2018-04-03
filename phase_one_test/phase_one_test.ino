@@ -12,77 +12,90 @@
 #include <ThreadController.h>
 #include <StaticThreadController.h>
 #include <Thread.h>
+#include <HX711.h>
 
 // change these based on setup
 #define X_POSITIVE true
 #define Y_POSITIVE false
 #define Z_POSITIVE true
 
-#define W_FORK      600
-#define W_SPOON     400
-#define W_KNIFE     800
-#define W_TOLERANCE 0.5
-#define W_SCALE     1.0
+// weight ratios
+#define SPOON_INITIAL 100.0
+#define W_SPOON       100.0
+#define W_FORK        120.0
+#define W_KNIFE       150.0
+// percentage
+#define W_TOLERANCE   0.025
+
+#define LOAD_SENSOR_SCALE  1000
+#define LOAD_SENSOR_OFFSET 0
 
 // Number of values to average for weight sensor filtering (1: no filtering, max: 10000)
-#define W_FILTER_COUNT 100
+#define W_BUFFER_SIZE  5
 #define STEP_SIZE      200
+
+#define ENDSTOP_BUFFER_SIZE 5
+// 1: no filtering, 5: extreme filtering (unresponsive to pressing the endstop)
+#define ENDSTOP_FILTER_LVL 3
 
 /* Pin Layout */
 // Crane
-#define MX_DIR_PIN         22
-#define MX_STEP_PIN        23
-#define END_SWITCH_X_START 24
-#define END_SWITCH_X_END   25
-#define MY_DIR_PIN         26
-#define MY_STEP_PIN        27
-#define END_SWITCH_Y_START 28
-#define END_SWITCH_Y_END   29
-#define MZ_DIR_PIN         30
-#define MZ_STEP_PIN        31
-#define END_SWITCH_Z_START 32
-#define END_SWITCH_Z_END   33
+#define MX_DIR_PIN      22
+#define MX_STEP_PIN     23
+#define ENDSTOP_X_START 33
+#define ENDSTOP_X_END   25
+#define MY_DIR_PIN      26
+#define MY_STEP_PIN     27
+#define ENDSTOP_Y_START 28
+#define ENDSTOP_Y_END   29
+#define MZ_DIR_PIN      30
+#define MZ_STEP_PIN     31
+#define ENDSTOP_Z_START 32
+#define ENDSTOP_Z_END   24
 
-// Other
-#define LOAD_SENSOR_PIN    A0
-#define MAGNET_PWM_PIN     2
-#define POLISHER_PIN       53
-#define MAGNET_POWER_PIN   52
-#define HEATER_PIN         51
-#define FANS_PIN           50
-#define UV_PIN             49
+// Other (TODO: test using analog pins for load sensor)
+#define MAGNET_PWM_PIN      2
+#define POLISHER_PIN        53
+#define MAGNET_POWER_PIN    52
+#define HEATER_PIN          51
+#define FANS_PIN            50
+#define LOAD_SENSOR_DT_PIN  49
+#define LOAD_SENSOR_SCK_PIN 48
+#define UV_PIN              47
 
 /* readability */
 #define STOP         0
 #define PRESSED_DOWN 0
 
 // crane modes
-#define OFF          0
-#define RESET        1
-#define MANUAL       2
-#define AUTO         3
+#define OFF       0
+#define RESET     1
+#define MANUAL    2
+#define SET_SPOON 3
+#define AUTO      4
 
 
 
-bool  x_direction = true;
-int   x_position  = 0;
-int   x_limit     = 0;
-int   x_goal      = 0;
-float x_speed     = 0.0;
-bool  y_direction = true;
-int   y_position  = 0;
-int   y_limit     = 0;
-int   y_goal      = 0;
-float y_speed     = 0.0;
-bool  z_direction = true;
-int   z_position  = 0;
-int   z_limit     = 1000;
-int   z_goal      = 0;
-float z_speed     = 0.0;
-float weight      = 0.0;
+bool  x_direction  = true;
+int   x_position   = 0;
+int   x_limit      = 0;
+int   x_goal       = 0;
+float x_speed      = 0.0;
+bool  y_direction  = true;
+int   y_position   = 0;
+int   y_limit      = 0;
+int   y_goal       = 0;
+float y_speed      = 0.0;
+bool  z_direction  = true;
+int   z_position   = 0;
+int   z_limit      = 1000;
+int   z_goal       = 0;
+float z_speed      = 0.0;
+float weight       = 0.0;
+float spoon_weight = 0.0;
 
 // weigh filter variables
-// int weights[FILTER_COUNT];
+// int weights[W_BIFFER_SIZE];
 // memset(weights, 0, sizeof(weights));
 // long w_running_total = 0;
 
@@ -110,14 +123,19 @@ bool uv_on        = false;
 String commandString  = "";    // holds incoming data
 bool   stringComplete = false; // whether the string is complete
 
-Thread* th_a_mx_step    = new Thread();
-Thread* th_a_my_step    = new Thread();
-Thread* th_a_mz_step    = new Thread();
-Thread* th_s_end_switch = new Thread();
-Thread* th_s_detect     = new Thread();
+// Scale 
+HX711 scale(LOAD_SENSOR_DT_PIN, LOAD_SENSOR_SCK_PIN);
+float w_scale  = LOAD_SENSOR_SCALE;
+long  w_offset = LOAD_SENSOR_OFFSET;
 
-// StaticThreadController<5> controller (th_s_detect, th_a_mx_step, th_a_my_step, th_a_mz_step, th_s_end_switch);
-StaticThreadController<3> controller (th_a_mx_step, th_a_my_step, th_a_mz_step);
+Thread* th_a_mx_step = new Thread();
+Thread* th_a_my_step = new Thread();
+Thread* th_a_mz_step = new Thread();
+Thread* th_s_endstop = new Thread();
+Thread* th_s_detect  = new Thread();
+
+StaticThreadController<5> controller (th_s_detect, th_a_mx_step, th_a_my_step, th_a_mz_step, th_s_endstop);
+// StaticThreadController<3> controller (th_a_mx_step, th_a_my_step, th_a_mz_step);
 // StaticThreadController<1> controller (th_a_mx_step);
 
 void detect_callback() {
@@ -125,21 +143,22 @@ void detect_callback() {
   static float w_average = 0;
   static int count = 0;
 
-  w_total += analogRead(LOAD_SENSOR_PIN) * W_SCALE;
+  // read load sensor
+  w_total += scale.get_units(1);
   count += 1;
 
-  if (count >= W_FILTER_COUNT) {
-    w_average = w_total / (float)W_FILTER_COUNT; // cast to float
+  if (count >= W_BUFFER_SIZE) {
+    w_average = w_total / (float)W_BUFFER_SIZE; // cast to float
     Serial.print("average weight: ");
     Serial.println(w_average);
 
-    if (w_average < 10 * W_TOLERANCE) {
+    if (w_average < 10 * w_average*W_TOLERANCE) {
       load = NoLoad;
-    } else if (w_average > (W_FORK - W_TOLERANCE) && w_average < (W_FORK + W_TOLERANCE)) {
+    } else if (w_average > W_FORK*(1-W_TOLERANCE) && w_average < W_FORK*(1+W_TOLERANCE)) {
       load = Fork;
-    } else if (w_average > (W_SPOON - W_TOLERANCE) && w_average < (W_SPOON + W_TOLERANCE)) {
+    } else if (w_average > W_SPOON*(1-W_TOLERANCE) && w_average < W_SPOON*(1+W_TOLERANCE)) {
       load = Spoon;
-    } else if (w_average > (W_KNIFE - W_TOLERANCE) && w_average < (W_KNIFE + W_TOLERANCE)) {
+    } else if (w_average > W_KNIFE*(1-W_TOLERANCE) && w_average < W_KNIFE*(+W_TOLERANCE)) {
       load = Knive;
     } else {
       load = Unknown;
@@ -171,142 +190,206 @@ void detect_callback() {
   }
 }
 
-void m_step(int pin_number, int pin_state, int motor_state, int motor_postition, int motor_direction, bool motor_positive_direction, int motor_goal) {
-  // if pin is high make it low.
-  if (pin_state) {
-    noInterrupts();
-    digitalWrite(pin_number, LOW);
-    pin_state = false;
-    interrupts();
+void mx_step_callback() {
+  static bool mx_step_high = false;
+  if (mx_step_high) {
+    digitalWrite(MX_STEP_PIN, LOW);
+    mx_step_high = false;
   }
-  // if pin is low make it high if motor is also on.
   else {
-    if (motor_state) {
-      noInterrupts();
-      digitalWrite(pin_number, HIGH);
-      pin_state = true;
-      interrupts();
-      // if going in "positive" direction then increment motor position
-      if (motor_direction == motor_positive_direction) {
-        motor_postition++;
-        // if motor_position is past destination then stop the motor
-        if (motor_postition >= motor_goal) {
-          motor_state = false;
+    if (mx_stepper_on) {
+      digitalWrite(MX_STEP_PIN, HIGH);
+      mx_step_high = true;
+      if (x_direction == X_POSITIVE) {
+        x_position++;
+        if (x_position >= x_goal) {
+          mx_stepper_on = false;
         }
-      }
-      // if going in "negative" direction then decrement motor position 
-      else {
-        motor_postition--;
-        // if motor_position is past destination then stop the motor
-        if (motor_postition <= motor_goal) {
-          motor_state = false;
+      } else {
+        x_position--;
+        if (x_position <= x_goal) {
+          mx_stepper_on = false;
         }
       }
     }
   }
-} 
-
-void mx_step_callback() {
-  static bool mx_step_high = false;
-  m_step(MX_STEP_PIN, mx_step_high, mx_stepper_on, x_position, x_direction, X_POSITIVE, x_goal);
 }
 
 void my_step_callback() {
   static bool my_step_high = false;
-  m_step(MY_STEP_PIN, my_step_high, my_stepper_on, y_position, y_direction, Y_POSITIVE, y_goal);
+  if (my_step_high) {
+    digitalWrite(MY_STEP_PIN, LOW);
+    my_step_high = false;
+  }
+  else {
+    if (my_stepper_on) {
+      digitalWrite(MY_STEP_PIN, HIGH);
+      my_step_high = true;
+      if (y_direction == Y_POSITIVE) {
+        y_position++;
+        if (y_position >= y_goal) {
+          my_stepper_on = false;
+        }
+      } else {
+        y_position--;
+        if (y_position <= y_goal) {
+          my_stepper_on = false;
+        }
+      }
+    }
+  }
 }
 
 void mz_step_callback() {
   static bool mz_step_high = false;
-  m_step(MZ_STEP_PIN, mz_step_high, mz_stepper_on, z_position, z_direction, Z_POSITIVE, z_goal);
+  if (mz_step_high) {
+    digitalWrite(MZ_STEP_PIN, LOW);
+    mz_step_high = false;
+  }
+  else {
+    if (mz_stepper_on) {
+      digitalWrite(MZ_STEP_PIN, HIGH);
+      mz_step_high = true;
+      if (z_direction == Z_POSITIVE) {
+        z_position++;
+        if (z_position >= z_goal) {
+          mz_stepper_on = false;
+        }
+      } else {
+        z_position--;
+        if (z_position <= z_goal) {
+          mz_stepper_on = false;
+        }
+      }
+    }
+  }
 }
 
-void endSwitch_callback() {
-  // switch states
-  static int  switch_x_start = LOW;
-  static int  switch_x_end   = LOW;
-  static int  switch_y_start = LOW;
-  static int  switch_y_end   = LOW;
-  static int  switch_z_start = LOW;
-  static int  switch_z_end   = LOW;
+void endstop_callback() {
+  // endstop states
+  static int  x_start_pressed = LOW;
+  static int  x_end_pressed   = LOW;
+  static int  y_start_pressed = LOW;
+  static int  y_end_pressed   = LOW;
+  static int  z_start_pressed = LOW;
+  static int  z_end_pressed   = LOW;
+  // endstop state buffers
+  static float x_start_pressed_count = 0;
+  static float x_end_pressed_count   = 0;
+  static float y_start_pressed_count = 0;
+  static float y_end_pressed_count   = 0;
+  static float z_start_pressed_count = 0;
+  static float z_end_pressed_count   = 0;
+  // buffer counter
+  static int count = 0;
+
+  static bool debug = false;
 
   noInterrupts();
-  switch_x_start = digitalRead(END_SWITCH_X_START);
-  if (switch_x_start == PRESSED_DOWN && x_direction == !X_POSITIVE) {
-    // Serial.println("x_start pressed");
-    if (mx_stepper_on) {
-      // Serial.println("turning x-motor off...");
-      mx_stepper_on = false;
-      x_position    = 0;
-      x_goal        = 0;
-    }
-  }
-  interrupts();
+  x_start_pressed_count += digitalRead(ENDSTOP_X_START);
+  x_end_pressed_count   += digitalRead(ENDSTOP_X_END);
+  y_start_pressed_count += digitalRead(ENDSTOP_Y_START);
+  y_end_pressed_count   += digitalRead(ENDSTOP_Y_END);
+  z_start_pressed_count += digitalRead(ENDSTOP_Z_START);
+  z_end_pressed_count   += digitalRead(ENDSTOP_Z_END);
+  count += 1;
 
-  noInterrupts();
-  switch_x_end = digitalRead(END_SWITCH_X_END);
-  if (switch_x_end == PRESSED_DOWN && x_direction == X_POSITIVE) {
-    // Serial.println("x_end pressed");
-    if (mx_stepper_on) {
-      // Serial.println("turning x-motor off...");
-      mx_stepper_on = false;
-      x_limit       = x_position;
-      x_goal        = x_position;
+  if (count >= ENDSTOP_BUFFER_SIZE) {
+    // X Start
+    if (x_start_pressed_count < ENDSTOP_FILTER_LVL && x_direction == !X_POSITIVE) {
+      if (debug){
+        Serial.println("x_start pressed");
+      }
+      if (mx_stepper_on) {
+        if (debug) {
+          Serial.println("turning x-motor off...");
+        }
+        mx_stepper_on = false;
+        x_position    = 0;
+        x_goal        = 0;
+      }
     }
-  }
-  interrupts();
+    // X End
+    if (x_end_pressed_count < ENDSTOP_FILTER_LVL && x_direction == X_POSITIVE) {
+      if (debug) {
+        Serial.println("x_end pressed");
+      }
+      if (mx_stepper_on) {
+        if (debug) {
+          Serial.println("turning x-motor off...");
+        }
+        mx_stepper_on = false;
+        x_limit       = x_position;
+        x_goal        = x_position;
+      }
+    }
+    // Y Start
+    if (y_start_pressed_count < ENDSTOP_FILTER_LVL && y_direction == !Y_POSITIVE) {
+      if (debug) {
+        Serial.println("y_start pressed");
+      }
+      if (my_stepper_on) {
+        if (debug) {
+          Serial.println("turning y-motor off...");
+        }
+        my_stepper_on = false;
+        y_position    = 0;
+        y_goal        = 0;
+      }
+    }
+    // Y End
+    if (y_end_pressed_count < ENDSTOP_FILTER_LVL && y_direction == Y_POSITIVE) {
+      if (debug) {
+        Serial.println("y_end pressed");
+      }
+      if (my_stepper_on) {
+        if (debug) {
+          Serial.println("turning y-motor off...");
+        }
+        my_stepper_on = false;
+        y_limit       = y_position;
+        y_goal        = y_position;
+      }
+    }
+    // Z Start
+    if (z_start_pressed_count < ENDSTOP_FILTER_LVL && z_direction == !Z_POSITIVE) {
+      if (debug) {
+        Serial.println("z_start pressed");
+      }
+      if (mz_stepper_on) {
+        if (debug) {
+          Serial.println("turning z-motor off...");
+        }
+        mz_stepper_on = false;
+        z_position    = 0;
+        z_goal        = 0;
+      }
+    }
+    // Z End
+    if (z_end_pressed_count < ENDSTOP_FILTER_LVL && z_direction == Z_POSITIVE) {
+      if (debug) {
+        Serial.println("z_end pressed");
+      }
+      if (mz_stepper_on) {
+        if (debug) {
+          Serial.println("turning z-motor off...");
+        }
+        mz_stepper_on = false;
+        z_limit       = z_position;
+        z_goal        = z_position;
+      }
+    }
 
-  noInterrupts();
-  switch_y_start = digitalRead(END_SWITCH_Y_START);
-  if (switch_y_start == PRESSED_DOWN) {
-    // Serial.println("y_start pressed");
-    if (y_direction == !Y_POSITIVE) {
-      // Serial.println("turning y-motor off...");
-      my_stepper_on = false;
-      y_position    = 0;
-      y_goal        = 0;
-    }
+    count = 0;
+    x_start_pressed_count = 0;
+    x_end_pressed_count   = 0;
+    y_start_pressed_count = 0;
+    y_end_pressed_count   = 0;
+    z_start_pressed_count = 0;
+    z_end_pressed_count   = 0;
   }
   interrupts();
-
-  noInterrupts();
-  switch_y_end = digitalRead(END_SWITCH_Y_END);
-  if (switch_y_end == PRESSED_DOWN) {
-    // Serial.println("y_end pressed");
-    if (y_direction == Y_POSITIVE) {
-      // Serial.println("turning y-motor off...");
-      my_stepper_on = false;
-      y_limit       = y_position;
-      y_goal        = y_position;
-    }
-  }
-  interrupts();
-
-  noInterrupts();
-  switch_z_start = digitalRead(END_SWITCH_Z_START);
-  if (switch_z_start == PRESSED_DOWN) {
-    // Serial.println("z_start pressed");
-    if (z_direction == !Z_POSITIVE) {
-      // Serial.println("turning z-motor off...");
-      mz_stepper_on = false;
-      z_position    = 0;
-      z_goal        = 0;
-    }
-  }
-  interrupts();
-
-  noInterrupts();
-  switch_z_end = digitalRead(END_SWITCH_Z_END);
-  if (switch_z_end == PRESSED_DOWN) {
-    // Serial.println("z_end pressed");
-    if (z_direction == Z_POSITIVE) {
-      // Serial.println("turning z-motor off...");
-      mz_stepper_on = false;
-      z_limit       = z_position;
-      z_goal        = z_position;
-    }
-  }
-  interrupts();
+  
 }
 
 void reset_crane() {
@@ -335,9 +418,9 @@ void reset_crane() {
   z_direction = !Z_POSITIVE;
   digitalWrite(MZ_DIR_PIN, z_direction);
   // Set speed
-  th_a_mx_step->setInterval(500.0);
-  th_a_my_step->setInterval(500.0);
-  th_a_mz_step->setInterval(500.0);
+  th_a_mx_step->setInterval(1500.0);
+  th_a_my_step->setInterval(1500.0);
+  th_a_mz_step->setInterval(1500.0);
   mx_stepper_on = true;
   my_stepper_on = true;
   mz_stepper_on = true;
@@ -345,9 +428,8 @@ void reset_crane() {
   // the interrupt will cause the infinite while loop condition to break after the motors reach the endstops
   while (mx_stepper_on || my_stepper_on || mz_stepper_on) {
     // Debug
-    // Serial.print("x_position");
-    // Serial.println(x_position);
-    // if (!mx_stepper_on && !my_stepper_on && !mz_stepper_on) break;
+    Serial.print("x_position");
+    Serial.println(x_position);
   };
 
   // set limit and direction
@@ -360,7 +442,7 @@ void reset_crane() {
   z_position = 0;
   x_goal = 10000;
   y_goal = 10000;
-  z_goal = 10000;
+  z_goal = z_limit;
   x_direction = X_POSITIVE;
   digitalWrite(MX_DIR_PIN, X_POSITIVE);
   y_direction = Y_POSITIVE;
@@ -368,20 +450,50 @@ void reset_crane() {
   z_direction = Z_POSITIVE;  
   digitalWrite(MZ_DIR_PIN, Z_POSITIVE);
   // Set speed
-  th_a_mx_step->setInterval(500.0);
-  th_a_my_step->setInterval(500.0);
-  // th_a_mz_step->setInterval(500.0);
+  th_a_mx_step->setInterval(1500.0);
+  th_a_my_step->setInterval(1500.0);
+  th_a_mz_step->setInterval(1500.0);
   mx_stepper_on = true;
   my_stepper_on = true;
-  // mz_stepper_on = true;
+  mz_stepper_on = true;
   interrupts();
   // the interrupt will cause the infinite while loop condition to break after the motors reach the endstops
   while (mx_stepper_on || my_stepper_on || mz_stepper_on) {
     // Debug
-    // Serial.print("x_position");
-    // Serial.println(x_position);
+    Serial.print("x_position");
+    Serial.println(x_position);
+    // if (!mx_stepper_on && !my_stepper_on && !mz_stepper_on) break;
+    // TODO: wierd bug makes the loop infinite if there is no Serial print statement
+  };
+
+  // go to middle
+  noInterrupts();
+  x_goal = x_limit / 2.0;
+  y_goal = y_limit / 2.0;
+  z_goal = z_limit / 2.0;
+  // Set direction
+  x_direction = !X_POSITIVE;
+  digitalWrite(MX_DIR_PIN, x_direction);
+  y_direction = !Y_POSITIVE;
+  digitalWrite(MY_DIR_PIN, y_direction);
+  z_direction = !Z_POSITIVE;
+  digitalWrite(MZ_DIR_PIN, z_direction);
+  // Set speed
+  th_a_mx_step->setInterval(1500.0);
+  th_a_my_step->setInterval(1500.0);
+  th_a_mz_step->setInterval(1500.0);
+  mx_stepper_on = true;
+  my_stepper_on = true;
+  mz_stepper_on = true;
+  interrupts();
+  while (mx_stepper_on || my_stepper_on || mz_stepper_on) {
+    // Debug
+    Serial.print("x_position");
+    Serial.println(x_position);
     // if (!mx_stepper_on && !my_stepper_on && !mz_stepper_on) break;
   };
+
+  // TODO create set goal and set speed helper functions
 }
 
 void manual_crane(String commandString) {
@@ -482,6 +594,14 @@ void manual_crane(String commandString) {
   interrupts();
 }
 
+void set_spoon(float spoon_weight) {
+  static float correction;
+  correction = spoon_weight/SPOON_INITIAL;
+  noInterrupts();
+  scale.set_scale(correction*w_scale);
+  interrupts();
+}
+
 // This is the callback for the Timer
 void timerCallback(){
   controller.run();
@@ -494,40 +614,43 @@ void setup() {
   
   /* Pins */
   // X
-  pinMode     ( MX_DIR_PIN,         OUTPUT );
-  digitalWrite( MX_DIR_PIN,         LOW    );
-  pinMode     ( MX_STEP_PIN,        OUTPUT );
-  digitalWrite( MX_STEP_PIN,        LOW    );
-  pinMode     ( END_SWITCH_X_START, INPUT  );
-  pinMode     ( END_SWITCH_X_END,   INPUT  );
+  pinMode     ( MX_DIR_PIN,       OUTPUT );
+  digitalWrite( MX_DIR_PIN,       LOW    );
+  pinMode     ( MX_STEP_PIN,      OUTPUT );
+  digitalWrite( MX_STEP_PIN,      LOW    );
+  pinMode     ( ENDSTOP_X_START,  INPUT  );
+  pinMode     ( ENDSTOP_X_END,    INPUT  );
   // // Y
-  pinMode     ( MY_DIR_PIN,         OUTPUT );
-  digitalWrite( MY_DIR_PIN,         LOW    );
-  pinMode     ( MY_STEP_PIN,        OUTPUT );
-  digitalWrite( MY_STEP_PIN,        LOW    );
-  pinMode     ( END_SWITCH_Y_START, INPUT  );
-  pinMode     ( END_SWITCH_Y_END,   INPUT  );
+  pinMode     ( MY_DIR_PIN,       OUTPUT );
+  digitalWrite( MY_DIR_PIN,       LOW    );
+  pinMode     ( MY_STEP_PIN,      OUTPUT );
+  digitalWrite( MY_STEP_PIN,      LOW    );
+  pinMode     ( ENDSTOP_Y_START,  INPUT  );
+  pinMode     ( ENDSTOP_Y_END,    INPUT  );
   // // Z
-  pinMode     ( MZ_DIR_PIN,         OUTPUT );
-  digitalWrite( MZ_DIR_PIN,         LOW    );
-  pinMode     ( MZ_STEP_PIN,        OUTPUT );
-  digitalWrite( MZ_STEP_PIN,        LOW    );
-  pinMode     ( END_SWITCH_Z_START, INPUT  );
-  pinMode     ( END_SWITCH_Z_END,   INPUT  );
+  pinMode     ( MZ_DIR_PIN,       OUTPUT );
+  digitalWrite( MZ_DIR_PIN,       LOW    );
+  pinMode     ( MZ_STEP_PIN,      OUTPUT );
+  digitalWrite( MZ_STEP_PIN,      LOW    );
+  pinMode     ( ENDSTOP_Z_START,  INPUT  );
+  pinMode     ( ENDSTOP_Z_END,    INPUT  );
   // Other
-  pinMode     ( LOAD_SENSOR_PIN,    INPUT  );
-  pinMode     ( MAGNET_PWM_PIN,     OUTPUT );
-  analogWrite ( MAGNET_PWM_PIN,     0      );
-  pinMode     ( MAGNET_POWER_PIN,   OUTPUT );
-  digitalWrite( MAGNET_POWER_PIN,   LOW    );
-  pinMode     ( POLISHER_PIN,       OUTPUT );
-  digitalWrite( POLISHER_PIN,       LOW    );
-  pinMode     ( HEATER_PIN,         OUTPUT );
-  digitalWrite( HEATER_PIN,         LOW    );
-  pinMode     ( FANS_PIN,           OUTPUT );
-  digitalWrite( FANS_PIN,           LOW    );
-  pinMode     ( UV_PIN,             OUTPUT );
-  digitalWrite( UV_PIN,             LOW    );
+  pinMode     ( MAGNET_PWM_PIN,   OUTPUT );
+  analogWrite ( MAGNET_PWM_PIN,   0      );
+  pinMode     ( MAGNET_POWER_PIN, OUTPUT );
+  digitalWrite( MAGNET_POWER_PIN, LOW    );
+  pinMode     ( POLISHER_PIN,     OUTPUT );
+  digitalWrite( POLISHER_PIN,     LOW    );
+  pinMode     ( HEATER_PIN,       OUTPUT );
+  digitalWrite( HEATER_PIN,       LOW    );
+  pinMode     ( FANS_PIN,         OUTPUT );
+  digitalWrite( FANS_PIN,         LOW    );
+  pinMode     ( UV_PIN,           OUTPUT );
+  digitalWrite( UV_PIN,           LOW    );
+
+  /* Load Sensor */
+  set_spoon(SPOON_INITIAL);
+  scale.tare();  //Reset the scale to 0
 
   /* Threads */
   // X
@@ -540,10 +663,10 @@ void setup() {
   th_a_mz_step->setInterval(10000);
   th_a_mz_step->onRun(mz_step_callback);
   // Endstops
-  th_s_end_switch->setInterval(10000);
-  th_s_end_switch->onRun(endSwitch_callback);
+  th_s_endstop->setInterval(1000);
+  th_s_endstop->onRun(endstop_callback);
   // Weight Sensor
-  th_s_detect->setInterval(4000000);
+  th_s_detect->setInterval(1000000);
   th_s_detect->onRun(detect_callback);
 
   // Timer setup
@@ -558,56 +681,19 @@ void loop() {
     // off: 0
     // reset: 1
     // manual, speeds:3, positions: 5, else: off --> 0, 201010000200200000000000
+    // manual, speeds:3, positions: 5, else: off --> 0, 2010100-02-0200000000000
+    // turn magnet on:                           -->    201010000000000010100000
+    // set magnet to spoon:                      -->    201010000000000010030000
+    // reset scale to 119.37 (spoon's weight)    -->    3119.37
 
     // Debug
     Serial.println(commandString);
 
     // Decoding the input command into actuation signals
-    crane_mode   = commandString.substring(0,  1).toInt();
-    x_speed      = commandString.substring(1,  3).toInt();
-    y_speed      = commandString.substring(3,  5).toInt();
-    z_speed      = commandString.substring(5,  7).toInt();
-    x_goal       = commandString.substring(7, 10).toInt();
-    y_goal       = commandString.substring(10,13).toInt();
-    z_goal       = commandString.substring(13,16).toInt();
-    magnet_on    = commandString.substring(16,17).toInt();
-    magnet_lvl   = commandString.substring(17,20).toInt();
-    vibration_on = commandString.substring(20,21).toInt();
-    heater_on    = commandString.substring(21,22).toInt();
-    fans_on      = commandString.substring(22,23).toInt();
-    uv_on        = commandString.substring(23,24).toInt();
+    crane_mode = commandString.substring(0,  1).toInt();
     
     Serial.print("Crane mode: ");
     Serial.println(crane_mode);
-    Serial.print("X speed: ");
-    Serial.println(x_speed);
-    Serial.print("Y speed: ");
-    Serial.println(y_speed);
-    Serial.print("Z speed: ");
-    Serial.println(z_speed);
-    Serial.print("X goal: ");
-    Serial.println(x_goal);
-    Serial.println(commandString.substring(7, 10).toInt());
-    Serial.print("Y goal: ");
-    Serial.println(y_goal);
-    Serial.println(commandString.substring(10, 13).toInt());
-    Serial.print("Z goal: ");
-    Serial.println(z_goal);
-    Serial.println(commandString.substring(13, 16).toInt());
-    Serial.print("magnet_on: ");
-    Serial.println(magnet_on);
-    Serial.print("magnet_lvl: ");
-    Serial.println(magnet_lvl);
-    Serial.print("vibration_on: ");
-    Serial.println(vibration_on);
-    Serial.print("heater_on: ");
-    Serial.println(heater_on);
-    Serial.print("fans_on: ");
-    Serial.println(fans_on);
-    Serial.print("uv_on: ");
-    Serial.println(uv_on);
-    
-
 
     switch (crane_mode) {
 
@@ -658,12 +744,61 @@ void loop() {
 
           // Debug
           Serial.println("In manual mode...");
+          x_speed      = commandString.substring(1,  3).toInt();
+          y_speed      = commandString.substring(3,  5).toInt();
+          z_speed      = commandString.substring(5,  7).toInt();
+          x_goal       = commandString.substring(7, 10).toInt();
+          y_goal       = commandString.substring(10,13).toInt();
+          z_goal       = commandString.substring(13,16).toInt();
+          magnet_on    = commandString.substring(16,17).toInt();
+          magnet_lvl   = commandString.substring(17,20).toInt();
+          vibration_on = commandString.substring(20,21).toInt();
+          heater_on    = commandString.substring(21,22).toInt();
+          fans_on      = commandString.substring(22,23).toInt();
+          uv_on        = commandString.substring(23,24).toInt();
+          Serial.print("X speed: ");
+          Serial.println(x_speed);
+          Serial.print("Y speed: ");
+          Serial.println(y_speed);
+          Serial.print("Z speed: ");
+          Serial.println(z_speed);
+          Serial.print("X goal: ");
+          Serial.println(x_goal);
+          Serial.println(commandString.substring(7, 10).toInt());
+          Serial.print("Y goal: ");
+          Serial.println(y_goal);
+          Serial.println(commandString.substring(10, 13).toInt());
+          Serial.print("Z goal: ");
+          Serial.println(z_goal);
+          Serial.println(commandString.substring(13, 16).toInt());
+          Serial.print("magnet_on: ");
+          Serial.println(magnet_on);
+          Serial.print("magnet_lvl: ");
+          Serial.println(magnet_lvl);
+          Serial.print("vibration_on: ");
+          Serial.println(vibration_on);
+          Serial.print("heater_on: ");
+          Serial.println(heater_on);
+          Serial.print("fans_on: ");
+          Serial.println(fans_on);
+          Serial.print("uv_on: ");
+          Serial.println(uv_on);
           manual_crane(commandString);
           // Debug
           // Serial.println("Speed and destination set to: () and ()");
 
           break;
 
+        case SET_SPOON:
+          /*
+            Reset-scale mode: recalibrating the load sensor
+          */
+          Serial.println("In calibrate mode (resetting spoon's weight)...");
+          spoon_weight = commandString.substring(1,7).toFloat();
+          // Debug
+          Serial.print("Calibration factor: ");
+          Serial.println(spoon_weight);
+          set_spoon(spoon_weight);
 
         case AUTO:
           /*
