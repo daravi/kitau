@@ -402,7 +402,6 @@ void setup() {
   Timer1.initialize(200);
   Timer1.attachInterrupt(timerCallback);
   Timer1.start();
-
 }
 
 void loop() {
